@@ -334,6 +334,16 @@ def api_debug_pool():
     )
 
 
+@app.get("/api/debug/version")
+def api_debug_version():
+    import subprocess
+    try:
+        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd='/opt/render/project/src').decode().strip()
+    except Exception:
+        git_hash = "unknown"
+    return jsonify(git_hash=git_hash, deploy_time="2026-11-21")
+
+
 @app.get("/api/cerca")
 def api_cerca():
     if "lat" not in request.args or "lon" not in request.args:
