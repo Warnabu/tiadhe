@@ -198,7 +198,7 @@ class Comunidad:
             return "pendiente"
         ts = int(mediana_pond([(f["ts"], f["peso"]) for f in acuerdo]))
         base = acuerdo[0]
-ids_ok = {f["id"] for f in acuerdo}
+        ids_ok = {f["id"] for f in acordo}
         agora_int = int(ahora)
         for f in filas:
             if f["evaluado"]:
