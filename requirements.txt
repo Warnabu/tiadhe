@@ -11,3 +11,4 @@ gunicorn>=21.0
 psycopg2-binary>=2.9
 firebase-admin>=6.5
 PyJWT>=2.8
+# force rebuild 2026-11-21
