@@ -21,7 +21,14 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 USE_POSTGRES = DATABASE_URL and PSYCOPG2_AVAILABLE
 
 if USE_POSTGRES:
-    POOL = ThreadedConnectionPool(1, 10, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
+    try:
+        POOL = ThreadedConnectionPool(1, 10, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
+    except Exception as e:
+        print(f"PostgreSQL connection failed: {e}. Falling back to SQLite.")
+        USE_POSTGRES = False
+        POOL = None
+        _SQLITE_DB = None
+        _SQLITE_LOCK = threading.Lock()
 else:
     POOL = None
     _SQLITE_DB = None
