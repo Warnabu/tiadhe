@@ -17,7 +17,12 @@ for f in ("comunidad.db", "comunidad.db-wal", "comunidad.db-shm"):
     except PermissionError:
         pass  # en Windows puede estar bloqueado por otra ejecución en curso
 import servidor as s
-from comunidad import Comunidad, mensaje, Error
+from comunidad_pg import Comunidad, mensaje, Error
+import postgresql_db as pg
+
+# Clear database tables for clean test run
+for table in ("subidas", "observaciones", "nonces", "dispositivos", "registros", "ubicaciones_activas"):
+    pg.execute(f"DELETE FROM {table}")
 c = s.app.test_client()
 ok = fallos = 0
 def check(cond, texto):
@@ -134,15 +139,19 @@ except Error as e:
 var = s.g.variante_de(sal)
 off1 = s.g.minutos(p1, s.BASE[num])
 for i in range(3):
-    COM.db.execute("INSERT OR REPLACE INTO observaciones VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                   (f"2026091{i}|{num}|{sent}|{sal['h']}|{var}", cid1, num, sent, var,
-                    epoch("10:00:00") + round((off1 + 20) * 60), epoch("10:00:00"), epoch("09:59:00"), 3, 1.2, epoch("10:30:00")))
-COM.db.commit(); COM._snap_ts = -1e9
+    pg.execute("""INSERT INTO observaciones(viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,n,peso,creado)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON CONFLICT (viaje, cluster) DO UPDATE SET
+                      ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
+                      n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
+               (f"2026091{i}|{num}|{sent}|{sal['h']}|{var}", cid1, num, sent, var,
+                epoch("10:00:00") + round((off1 + 20) * 60), epoch("10:00:00"), epoch("09:59:00"), 3, 1.2, epoch("10:30:00")))
+COM._snap_ts = -1e9
 aprend = COM.aprendido(num, sent, var, p1["id"], off1)
 check(aprend is not None and off1 < aprend < off1 + 20, f"3 observaciones ({off1 + 20:.0f} min) + modelo ({off1:.0f} min) -> estimación mezclada {aprend:.1f} min")
 print(f"\n{ok} correctas, {fallos} fallos")
-s.COM.db.close()
-for f in ("comunidad.db", "comunidad.db-wal", "comunidad.db-shm"):
+# Clean up test database
+for f in ("comunidad_test.db", "comunidad_test.db-wal", "comunidad_test.db-shm"):
     p = os.path.join(os.path.dirname(__file__) or ".", "datos", f)
     try:
         if os.path.exists(p): os.remove(p)

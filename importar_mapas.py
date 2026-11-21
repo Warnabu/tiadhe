@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Importa las PARADAS REALES de los mapas de Google de Tiadhe (uno por línea).
+"""Importa las PARADAS REALES de los mapas de Google de Guaguas FTV (uno por línea).
 
     python importar_mapas.py                       # todas las líneas (descarga de tiadhe.com)
     python importar_mapas.py 12 01                 # solo esas líneas

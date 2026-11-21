@@ -1,20 +1,96 @@
 #!/usr/bin/env python3
-"""Web de guaguas de Fuerteventura.
+"""Web de guaguas de Fuerteventura (Guaguas FTV).
 
     python servidor.py          # http://127.0.0.1:5000
 En producción:  gunicorn -w 2 servidor:app   (detrás de nginx con HTTPS)
 Pruebas: GUAGUAS_DEBUG=1 permite ?hora=2026-09-24T10:05 en las consultas.
 """
-import base64, hashlib, json, os, time
+import base64, hashlib, json, os, time, jwt
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 
-from comunidad import Comunidad, Error, km_ll, mensaje
+from comunidad_pg import Comunidad, Error, km_ll, mensaje
 
 import guaguas as g
+
+try:
+    import firebase_admin
+    from firebase_admin import credentials, auth as firebase_auth, messaging
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+
+if not hasattr(g, "nombre_destino"):
+    raise SystemExit("guaguas.py es una versión antigua: sustitúyelo por el último y reinicia el servidor. \nLos archivos guaguas.py, servidor.py, importar_mapas.py y web/index.html deben ser de la misma entrega.")
+
+TZ = ZoneInfo("Atlantic/Canary")
+DEBUG = bool(os.environ.get("GUAGUAS_DEBUG"))
+app = Flask(__name__, static_folder="web", static_url_path="")
+HORARIOS, BASE = g.cargar()
+_osm = g.DATOS / "paradas_osm.json"
+OSM = [p for p in json.loads(_osm.read_text(encoding="utf-8")) if p["nombre"]] if _osm.exists() else []
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+COLOR = {num: g.COLORES[i % len(g.COLORES)] for i, num in enumerate(BASE)}
+
+JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-in-production")
+JWT_ALG = "HS256"
+JWT_EXP_HOURS = 24
+
+FIREBASE_CRED_PATH = os.environ.get("FIREBASE_CRED_PATH", "/etc/secrets/guaguas-ftv1-0c96bbab863c.json")
+_firebase_app = None
+def init_firebase():
+    global _firebase_app
+    if not FIREBASE_AVAILABLE:
+        return False
+    if _firebase_app:
+        return True
+    try:
+        cred = credentials.Certificate(FIREBASE_CRED_PATH)
+        _firebase_app = firebase_admin.initialize_app(cred)
+        return True
+    except Exception as e:
+        if DEBUG:
+            print(f"Firebase init failed: {e}")
+        return False
+
+def create_internal_token(uid: str, email: str = None, display_name: str = None) -> str:
+    payload = {
+        "uid": uid,
+        "email": email,
+        "name": display_name,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + JWT_EXP_HOURS * 3600,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+def verify_internal_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
+        raise Error("token expirado", 401)
+    except jwt.InvalidTokenError:
+        raise Error("token inválido", 401)
+
+def send_fcm_push(token: str, title: str, body: str, data: dict = None) -> bool:
+    if not FIREBASE_AVAILABLE:
+        return False
+    if not init_firebase():
+        return False
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(title=title, body=body),
+            data=data or {},
+            token=token,
+        )
+        messaging.send(message)
+        return True
+    except Exception as e:
+        if DEBUG:
+            print(f"FCM send failed: {e}")
+        return False
 
 if not hasattr(g, "nombre_destino"):
     raise SystemExit("guaguas.py es una versión antigua: sustitúyelo por el último y reinicia el servidor. \nLos archivos guaguas.py, servidor.py, importar_mapas.py y web/index.html deben ser de la misma entrega.")
@@ -29,9 +105,11 @@ DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "doming
 COLOR = {num: g.COLORES[i % len(g.COLORES)] for i, num in enumerate(BASE)}
 
 
-def agrupar(radio_km=0.06):
+def agrupar(radio_km=0.06, BASE=None):
     """Une las paradas (de cualquier línea) a menos de ~60 m: una parada física con sus dos sentidos
     es un único punto del mapa. Se conservan los ids de cada parada concreta de cada línea."""
+    if BASE is None:
+        BASE = globals().get('BASE', {})
     pts = sorted((p["lat"], p["lon"], p["n"], p["id"], num) for num, l in BASE.items() for p in l["paradas"])
     grupos = []
     for lat, lon, n, pid, num in pts:
@@ -84,13 +162,10 @@ def a_ts(dt):
     return dt.replace(tzinfo=TZ).timestamp()
 
 
-from pathlib import Path
-DB_DIR = Path(os.environ.get("DATA_DIR", str(g.DATOS)))
-DB_DIR.mkdir(parents=True, exist_ok=True)
-COM = Comunidad(DB_DIR / "comunidad.db",
-               {pid: set(gr["ids"]) for pid, gr in PARADAS.items()},
-               {pid: (gr["lat"], gr["lon"]) for pid, gr in PARADAS.items()},
-               TZ, reloj=ahora_ts)
+COM = Comunidad(
+    {pid: set(gr["ids"]) for pid, gr in PARADAS.items()},
+    {pid: (gr["lat"], gr["lon"]) for pid, gr in PARADAS.items()},
+    TZ, reloj=ahora_ts)
 
 @app.errorhandler(Error)
 def error_comunidad(e):
@@ -251,6 +326,61 @@ def api_cerca():
     d = dict(tablero(("osm", round(lat, 5), round(lon, 5)), dict(nombre=nombre, lat=lat, lon=lon), ahora_local()))
     d["parada"] = dict(id="osm", nombre=nombre, lineas=[], aprox=True)
     return jsonify(d)
+
+
+@app.post("/api/firebase-token")
+def api_firebase_token():
+    if not FIREBASE_AVAILABLE:
+        raise Error("firebase-admin no instalado", 500)
+    if not init_firebase():
+        raise Error("Firebase no configurado (falta FIREBASE_CRED_PATH)", 500)
+    d = request.get_json(silent=True) or {}
+    id_token = d.get("id_token")
+    if not id_token:
+        raise Error("falta id_token", 400)
+    try:
+        decoded = firebase_auth.verify_id_token(id_token)
+    except Exception as e:
+        raise Error(f"token inválido: {e}", 401)
+    uid = decoded.get("uid")
+    email = decoded.get("email")
+    name = decoded.get("name")
+    internal_token = create_internal_token(uid, email, name)
+    return jsonify(ok=True, token=internal_token, uid=uid, email=email, name=name)
+
+
+@app.post("/api/register-fcm-token")
+def api_register_fcm_token():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise Error("falta Authorization Bearer", 401)
+    token = auth_header[7:]
+    claims = verify_internal_token(token)
+    uid = claims["uid"]
+    d = request.get_json(silent=True) or {}
+    fcm_token = d.get("fcm_token")
+    if not fcm_token:
+        raise Error("falta fcm_token", 400)
+    try:
+        COM.guardar_fcm_token(uid, fcm_token)
+    except Exception:
+        pass
+    return jsonify(ok=True)
+
+
+@app.post("/api/test-push")
+def api_test_push():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise Error("falta Authorization Bearer", 401)
+    token = auth_header[7:]
+    claims = verify_internal_token(token)
+    uid = claims["uid"]
+    fcm_token = COM.obtener_fcm_token(uid)
+    if not fcm_token:
+        raise Error("no hay token FCM registrado", 400)
+    ok = send_fcm_push(fcm_token, "Guaguas FTV", "Notificación de prueba desde el backend")
+    return jsonify(ok=ok)
 
 
 if __name__ == "__main__":

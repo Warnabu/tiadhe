@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guaguas de Fuerteventura (Tiadhe): ¿qué guagua pasa por mi parada?
+"""Guaguas de Fuerteventura (Guaguas FTV): ¿qué guagua pasa por mi parada?
 
     python guaguas.py                       # modo interactivo
     python guaguas.py -p "Las Playitas"     # consulta directa
@@ -370,7 +370,7 @@ def crear_mapa(base, osm, horarios, objetivo=None, ahora=None, ruta="mapa_fuerte
 
 # ---------------------------------------------------------------------- main
 def main():
-    ap = argparse.ArgumentParser(description="Guaguas de Fuerteventura (Tiadhe)")
+    ap = argparse.ArgumentParser(description="Guaguas de Fuerteventura (Guaguas FTV)")
     ap.add_argument("-p", "--parada")
     ap.add_argument("--mapa", action="store_true")
     ap.add_argument("--hora", help='"AAAA-MM-DD HH:MM"')
