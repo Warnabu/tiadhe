@@ -87,6 +87,7 @@
 </div>
 <div id="cerca-hint"></div>
 <div id="perfil" class="oculto"></div>
+<div id="auth-controls" style="position:absolute; z-index:1000; top:10px; right:10px; display:flex; gap:8px; align-items:center;"></div>
 <div id="barra">
   <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off"><button id="gps" title="Paradas cerca de mí">📍</button></div>
   <div id="sug" class="oculto"></div>
@@ -100,6 +101,36 @@
   <p id="aviso"></p>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBlcA2zXuqVpQRnwso0aZ83HjRxj1KWo_k",
+  authDomain: "guaguas-ftv1.firebaseapp.com",
+  projectId: "guaguas-ftv1",
+  storageBucket: "guaguas-ftv1.firebasestorage.app",
+  messagingSenderId: "492276628357",
+  appId: "1:492276628357:web:1c35bd297d7c68f40c62ec",
+  measurementId: "G-29X3LWCFY5"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
+const messaging = getMessaging(app);
+
+// TODO: Reemplaza con tu VAPID key de Firebase Console > Project Settings > Cloud Messaging > Web Push certificates
+const VAPID_KEY = "TU_VAPID_KEY_AQUI";
+
+window.firebaseAuth = auth;
+window.firebaseProvider = provider;
+window.firebaseMessaging = messaging;
+window.firebaseSignIn = () => signInWithPopup(auth, provider);
+window.firebaseSignOut = () => signOut(auth);
+window.VAPID_KEY = VAPID_KEY;
+</script>
 <script src="/cliente.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -300,6 +331,32 @@ $('gps').onclick = () => {
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+
+const authControls = $('auth-controls');
+function renderAuthUI(user) {
+  if (user) {
+    authControls.innerHTML = `
+      <span style="font-size:12px; color:var(--gris);">👤 ${user.displayName || user.email}</span>
+      <button onclick="Guaguas.signOut()" style="padding:4px 10px; border:1px solid var(--borde); background:var(--fondo); border-radius:8px; font-size:11px; cursor:pointer;">Salir</button>
+    `;
+  } else {
+    authControls.innerHTML = `
+      <button onclick="Guaguas.signIn()" style="padding:6px 12px; border:1px solid var(--borde); background:var(--fondo); border-radius:10px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Iniciar sesión con Google
+      </button>
+    `;
+  }
+}
+
+if (window.firebaseAuth) {
+  import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js").then(({ onAuthStateChanged }) => {
+    onAuthStateChanged(window.firebaseAuth, (user) => renderAuthUI(user));
+  });
+} else {
+  renderAuthUI(null);
+}
+
 Guaguas.onPerfil(p => {
   const el = $('perfil');
   el.classList.remove('oculto');

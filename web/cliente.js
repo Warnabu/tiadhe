@@ -32,6 +32,7 @@ const Guaguas = (() => {
   }
 
   let db, priv, pub, dev, perfil = null, cambioPerfil = () => {};
+  let internalToken = null;
 
   async function id_de(pubRaw) {
     return hex(await crypto.subtle.digest("SHA-256", pubRaw)).slice(0, 32);
@@ -48,10 +49,46 @@ const Guaguas = (() => {
   async function pedir(metodo, ruta, cuerpo) {
     const { headers, texto } = await firmar(metodo, ruta, cuerpo);
     if (texto) headers["Content-Type"] = "application/json";
+    if (internalToken) headers["Authorization"] = "Bearer " + internalToken;
     const r = await fetch(ruta, { method: metodo, headers, body: texto || undefined });
     const j = await r.json().catch(() => null);
     if (!r.ok) throw new Error((j && j.error) || `error ${r.status}`);
     return j;
+  }
+
+  async function registrarFCMToken(fcmToken) {
+    if (!internalToken) return;
+    try {
+      await fetch("/api/register-fcm-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + internalToken },
+        body: JSON.stringify({ fcm_token: fcmToken })
+      });
+    } catch (e) {
+      console.warn("No se pudo registrar FCM token:", e.message);
+    }
+  }
+
+  async function inicializarFirebase() {
+    if (!window.firebaseMessaging) return;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") return;
+      const vapidKey = window.VAPID_KEY || "TU_VAPID_KEY_AQUI";
+      const token = await getToken(window.firebaseMessaging, { vapidKey });
+      if (token) {
+        await registrarFCMToken(token);
+      }
+    } catch (e) {
+      console.warn("FCM token error:", e.message);
+    }
+
+    onMessage(window.firebaseMessaging, (payload) => {
+      console.log("FCM message received:", payload);
+      if (payload.notification) {
+        new Notification(payload.notification.title, { body: payload.notification.body, icon: "/icons/icon-192.png" });
+      }
+    });
   }
 
   async function iniciar() {
@@ -66,12 +103,39 @@ const Guaguas = (() => {
       dev = await id_de(pub);
       await guardar(db, "par", { priv, pub, dev });
     }
+
     try {
       const j = await pedir("POST", "/api/registro", { pub: b64(pub) });
       perfil = j.perfil; cambioPerfil(perfil);
     } catch (e) {
       console.warn("No se pudo registrar el dispositivo:", e.message);
     }
+
+    if (window.firebaseAuth) {
+      const { onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+      onAuthStateChanged(window.firebaseAuth, async (user) => {
+        if (user) {
+          const idToken = await user.getIdToken();
+          try {
+            const resp = await fetch("/api/firebase-token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id_token: idToken })
+            });
+            const data = await resp.json();
+            if (data.ok && data.token) {
+              internalToken = data.token;
+              await inicializarFirebase();
+            }
+          } catch (e) {
+            console.warn("Error intercambiando token Firebase:", e.message);
+          }
+        } else {
+          internalToken = null;
+        }
+      });
+    }
+
     return dev;
   }
 
@@ -95,5 +159,7 @@ const Guaguas = (() => {
     iniciar, marcarSubida,
     onPerfil: f => { cambioPerfil = f; if (perfil) f(perfil); },
     perfil: () => perfil,
+    signIn: () => window.firebaseSignIn?.(),
+    signOut: () => window.firebaseSignOut?.(),
   };
 })();

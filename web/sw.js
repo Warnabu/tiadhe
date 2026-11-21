@@ -60,6 +60,30 @@ self.addEventListener('fetch', e => {
   );
 });
 
+// Push notifications from FCM
+self.addEventListener('push', e => {
+  if (!e.data) return;
+  const data = e.data.json();
+  const options = {
+    body: data.notification?.body || data.data?.body || 'Nueva notificación',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    data: data.data || {},
+    actions: [
+      { action: 'open', title: 'Abrir' },
+      { action: 'close', title: 'Cerrar' }
+    ]
+  };
+  e.waitUntil(self.registration.showNotification(data.notification?.title || 'Guaguas FTV', options));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  if (e.action === 'open' || !e.action) {
+    e.waitUntil(clients.openWindow('/'));
+  }
+});
+
 // Background sync for offline "me he subido" (future enhancement)
 self.addEventListener('sync', e => {
   if (e.tag === 'subida-offline') {
