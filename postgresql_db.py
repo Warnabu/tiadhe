@@ -188,6 +188,9 @@ def get_conn():
         conn = POOL.getconn()
         try:
             yield conn
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             POOL.putconn(conn)
     else:
