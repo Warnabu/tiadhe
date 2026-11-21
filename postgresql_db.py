@@ -181,18 +181,37 @@ def init_schema() -> None:
         _INITIALIZED = True
 
 
+def _validate_conn(conn) -> bool:
+    """Check if PostgreSQL connection is still alive."""
+    try:
+        conn.cursor().execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 @contextmanager
 def get_conn():
     """Get a connection from the pool (PostgreSQL) or SQLite connection."""
     if USE_POSTGRES:
-        conn = POOL.getconn()
-        try:
-            yield conn
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            POOL.putconn(conn)
+        for attempt in range(3):
+            conn = POOL.getconn()
+            try:
+                if _validate_conn(conn):
+                    yield conn
+                    return
+                else:
+                    print(f"PostgreSQL connection validation failed, attempt {attempt + 1}/3")
+                    POOL.putconn(conn, close=True)
+            except Exception as e:
+                print(f"PostgreSQL connection error: {e}, attempt {attempt + 1}/3")
+                try:
+                    POOL.putconn(conn, close=True)
+                except Exception:
+                    pass
+                if attempt == 2:
+                    raise
+        raise Exception("Failed to get valid PostgreSQL connection after 3 attempts")
     else:
         yield _get_sqlite_db()
 
@@ -228,37 +247,61 @@ def _convert_params(query: str, params: Tuple) -> Tuple[str, Tuple]:
 def execute(query: str, params: Tuple = (), fetch: bool = False) -> Optional[List[Dict[str, Any]]]:
     """Execute a query and optionally fetch results."""
     query, params = _convert_params(query, params)
-    with get_conn() as conn:
-        if USE_POSTGRES:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                if fetch:
-                    return cur.fetchall()
-                conn.commit()
-                return None
-        else:
-            cur = conn.cursor()
-            cur.execute(query, params)
-            if fetch:
-                rows = cur.fetchall()
-                return [dict(r) for r in rows]
-            conn.commit()
-            return None
+    for attempt in range(3):
+        try:
+            with get_conn() as conn:
+                if USE_POSTGRES:
+                    with conn.cursor() as cur:
+                        cur.execute(query, params)
+                        if fetch:
+                            return cur.fetchall()
+                        conn.commit()
+                        return None
+                else:
+                    cur = conn.cursor()
+                    cur.execute(query, params)
+                    if fetch:
+                        rows = cur.fetchall()
+                        return [dict(r) for r in rows]
+                    conn.commit()
+                    return None
+        except psycopg2.OperationalError as e:
+            if "SSL" in str(e) or "connection" in str(e).lower():
+                print(f"PostgreSQL SSL/connection error (attempt {attempt + 1}/3): {e}")
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+            else:
+                raise
+        except Exception:
+            raise
 
 
 def execute_one(query: str, params: Tuple = ()) -> Optional[Dict[str, Any]]:
     """Execute a query and fetch one result."""
     query, params = _convert_params(query, params)
-    with get_conn() as conn:
-        if USE_POSTGRES:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                return cur.fetchone()
-        else:
-            cur = conn.cursor()
-            cur.execute(query, params)
-            row = cur.fetchone()
-            return dict(row) if row else None
+    for attempt in range(3):
+        try:
+            with get_conn() as conn:
+                if USE_POSTGRES:
+                    with conn.cursor() as cur:
+                        cur.execute(query, params)
+                        return cur.fetchone()
+                else:
+                    cur = conn.cursor()
+                    cur.execute(query, params)
+                    row = cur.fetchone()
+                    return dict(row) if row else None
+        except psycopg2.OperationalError as e:
+            if "SSL" in str(e) or "connection" in str(e).lower():
+                print(f"PostgreSQL SSL/connection error (attempt {attempt + 1}/3): {e}")
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+            else:
+                raise
+        except Exception:
+            raise
 
 
 def cleanup_old_nonces(max_age_seconds: int = 600, agora: int = None) -> None:
