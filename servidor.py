@@ -15,6 +15,7 @@ from flask import Flask, jsonify, request
 from comunidad_pg import Comunidad, Error, km_ll, mensaje
 
 import guaguas as g
+import postgresql_db as pg_db
 
 try:
     import firebase_admin
@@ -381,6 +382,11 @@ def api_test_push():
         raise Error("no hay token FCM registrado", 400)
     ok = send_fcm_push(fcm_token, "Guaguas FTV", "Notificación de prueba desde el backend")
     return jsonify(ok=ok)
+
+
+@app.get("/health")
+def health():
+    return jsonify(ok=True, service="guaguas-ftv", db="postgresql" if pg_db.USE_POSTGRES else "sqlite")
 
 
 if __name__ == "__main__":
