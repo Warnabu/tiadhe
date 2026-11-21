@@ -321,6 +321,19 @@ def api_parada(pid):
     return jsonify(d)
 
 
+@app.get("/api/debug/pool")
+def api_debug_pool():
+    import postgresql_db as pg
+    return jsonify(
+        use_postgres=pg.USE_POSTGRES,
+        pool_min=pg.POOL.minconn if pg.POOL else None,
+        pool_max=pg.POOL.maxconn if pg.POOL else None,
+        pool_size=len(pg.POOL._pool) if pg.POOL and hasattr(pg.POOL, '_pool') else None,
+        pool_used=len(pg.POOL._used) if pg.POOL and hasattr(pg.POOL, '_used') else None,
+        pool_rused=len(pg.POOL._rused) if pg.POOL and hasattr(pg.POOL, '_rused') else None,
+    )
+
+
 @app.get("/api/cerca")
 def api_cerca():
     if "lat" not in request.args or "lon" not in request.args:
