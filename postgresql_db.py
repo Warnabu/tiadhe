@@ -260,13 +260,21 @@ def execute_one(query: str, params: Tuple = ()) -> Optional[Dict[str, Any]]:
 
 def cleanup_old_nonces(max_age_seconds: int = 600, ahora: int = None) -> None:
     """Remove expired nonces."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("Atlantic/Canary")
     if ahora is None:
-        ahora = int(time.time())
-    execute("DELETE FROM nonces WHERE ts < %s", (ahora - max_age_seconds,))
+        agora = int(time.time())
+    corte = datetime.fromtimestamp(ahora - max_age_seconds, TZ)
+    execute("DELETE FROM nonces WHERE ts < %s", (corte,))
 
 
 def cleanup_old_ubicaciones(max_age_seconds: int = 300, ahora: int = None) -> None:
     """Remove stale active locations."""
-    if ahora is None:
-        ahora = int(time.time())
-    execute("DELETE FROM ubicaciones_activas WHERE ts < %s", (ahora - max_age_seconds,))
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("Atlantic/Canary")
+    if agora is None:
+        agora = int(time.time())
+    corte = datetime.fromtimestamp(ahora - max_age_seconds, TZ)
+    execute("DELETE FROM ubicaciones_activas WHERE ts < %s", (corte,))

@@ -3,6 +3,7 @@ Reemplaza comunidad.py (SQLite) para producción en Render + Supabase.
 """
 import base64, hashlib, math, threading, time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
@@ -10,6 +11,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 import postgresql_db as pg
+
+TZ = ZoneInfo("Atlantic/Canary")
+
+def _ts_to_dt(ts: float) -> datetime:
+    """Convert Unix timestamp to timezone-aware datetime for PostgreSQL."""
+    return datetime.fromtimestamp(ts, TZ)
 
 # ------------------------------------------------ parámetros (ajustables)
 REP_INICIAL, PESO_MIN, PESO_MAX = 20.0, 0.35, 0.90
@@ -75,12 +82,14 @@ class Comunidad:
         with self.lock:
             existing = pg.execute_one("SELECT 1 FROM dispositivos WHERE id=%s", (dev,))
             if not existing:
-                n = pg.execute_one("SELECT COUNT(*) as c FROM registros WHERE ip=%s AND ts>%s", (ip, ahora - 86400))["c"]
+                corte = _ts_to_dt(ahora - 86400)
+                n = pg.execute_one("SELECT COUNT(*) as c FROM registros WHERE ip=%s AND ts>%s", (ip, corte))["c"]
                 if n >= MAX_REGISTROS_IP:
                     raise Error("demasiados dispositivos nuevos desde esta red; inténtalo mañana", 429)
-                pg.execute("INSERT INTO registros VALUES(%s,%s)", (ip, ahora))
+                ahora_dt = _ts_to_dt(ahora)
+                pg.execute("INSERT INTO registros VALUES(%s,%s)", (ip, ahora_dt))
                 pg.execute("INSERT INTO dispositivos(id,pub,creado,ult,rep) VALUES(%s,%s,%s,%s,%s)",
-                           (dev, raw, ahora, ahora, REP_INICIAL))
+                           (dev, raw, ahora_dt, ahora_dt, REP_INICIAL))
         return dev, raw
 
     def verificar(self, dev, ts, nonce, firma_b64, msg, ahora, pub_raw=None):
@@ -101,7 +110,7 @@ class Comunidad:
             nonce_key = dev + nonce
             if pg.execute_one("SELECT 1 FROM nonces WHERE n=%s", (nonce_key,)):
                 raise Error("petición repetida", 401)
-            pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, ahora))
+            pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, _ts_to_dt(ahora)))
             pg.cleanup_old_nonces(ahora=ahora)
         return dev
 
@@ -139,13 +148,14 @@ class Comunidad:
             def rechazar(msg, castigo=True):
                 if castigo:
                     st = f["strikes"] + 1 if ahora - f["strikes_ts"] < 86400 else 1
+                    ahora_dt = _ts_to_dt(ahora)
                     pg.execute("""UPDATE dispositivos SET strikes=%s, strikes_ts=%s, rep=MAX(0, rep-2), bloqueado=%s WHERE id=%s""",
-                               (st, ahora, ahora + 86400 if st >= 6 else 0, dev))
+                               (st, ahora_dt, _ts_to_dt(ahora + 86400) if st >= 6 else _ts_to_dt(0), dev))
                 raise Error(msg)
 
             if pg.execute_one("SELECT 1 FROM subidas WHERE dev=%s AND viaje=%s", (dev, viaje)):
                 raise Error("ya avisaste de esta guagua", 409)
-            cnt = pg.execute_one("SELECT COUNT(*) as c FROM subidas WHERE dev=%s AND ts>%s", (dev, ahora - 86400))["c"]
+            cnt = pg.execute_one("SELECT COUNT(*) as c FROM subidas WHERE dev=%s AND ts>%s", (dev, _ts_to_dt(ahora - 86400)))["c"]
             if cnt >= MAX_AL_DIA:
                 raise Error(f"máximo {MAX_AL_DIA} avisos al día", 429)
             ult = pg.execute_one("SELECT cluster, ts FROM subidas WHERE dev=%s ORDER BY ts DESC LIMIT 1", (dev,))
@@ -167,11 +177,12 @@ class Comunidad:
                 gps = 1
             rep_ef = self.rep_efectiva(f, ahora)
             peso = self.peso(rep_ef) * (1 if gps else FACTOR_SIN_GPS)
+            ahora_dt = _ts_to_dt(ahora)
             pg.execute("""INSERT INTO subidas(dev,viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,peso,gps)
                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                        (dev, viaje, cluster, pred["linea"], pred["sentido"], pred["variante"],
-                        ahora, pred["llegada_ts"], pred["inicio_ts"], peso, gps))
-            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (ahora, dev))
+                        ahora_dt, pred["llegada_ts"], pred["inicio_ts"], peso, gps))
+            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (ahora_dt, dev))
             estado = self._evaluar(viaje, cluster, ahora)
             self._snap_ts = 0
             return dict(estado=estado, gps=bool(gps))
@@ -187,14 +198,8 @@ class Comunidad:
             return "pendiente"
         ts = int(mediana_pond([(f["ts"], f["peso"]) for f in acuerdo]))
         base = acuerdo[0]
-        pg.execute("""INSERT INTO observaciones(viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,n,peso,creado)
-                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                      ON CONFLICT (viaje, cluster) DO UPDATE SET
-                          ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
-                          n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
-                   (viaje, cluster, base["linea"], base["sentido"], base["variante"],
-                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, ahora))
         ids_ok = {f["id"] for f in acuerdo}
+        ahora_dt = _ts_to_dt(ahora)
         for f in filas:
             if f["evaluado"]:
                 continue
@@ -207,13 +212,22 @@ class Comunidad:
                            (BAJA, f["dev"]))
                 est = "discrepante"
             pg.execute("UPDATE subidas SET estado=%s, evaluado=1 WHERE id=%s", (est, f["id"]))
+        pg.execute("""INSERT INTO observaciones(viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,n,peso,creado)
+                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                      ON CONFLICT (viaje, cluster) DO UPDATE SET
+                          ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
+                          n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
+                   (viaje, cluster, base["linea"], base["sentido"], base["variante"],
+                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, ahora_dt))
         return "confirmada"
 
     def limpiar(self, ahora):
         with self.lock:
-            pg.execute("DELETE FROM subidas WHERE ts<%s", (ahora - 90 * 86400,))
+            corte_antiguo = _ts_to_dt(ahora - 90 * 86400)
+            corte_reciente = _ts_to_dt(ahora - 7200)
+            pg.execute("DELETE FROM subidas WHERE ts<%s", (corte_antiguo,))
             pg.execute("UPDATE subidas SET estado='sin_confirmar', evaluado=1 WHERE estado='pendiente' AND ts<%s",
-                       (ahora - 7200,))
+                       (corte_reciente,))
             pg.cleanup_old_ubicaciones()
 
     # ------------------------------------------- enganche con el cálculo de tiempos
@@ -225,10 +239,12 @@ class Comunidad:
         if self._snap is None or abs(ahora - self._snap_ts) > 15:
             with self.lock:
                 viaje, aprendido = {}, {}
-                obs_recientes = pg.execute("SELECT * FROM observaciones WHERE ts>%s", (ahora - 36 * 3600,), fetch=True)
+                corte_reciente = _ts_to_dt(ahora - 36 * 3600)
+                corte_aprendido = _ts_to_dt(ahora - 60 * 86400)
+                obs_recientes = pg.execute("SELECT * FROM observaciones WHERE ts>%s", (corte_reciente,), fetch=True)
                 for o in obs_recientes:
                     viaje.setdefault(o["viaje"], []).append(dict(o))
-                obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado>%s", (ahora - 60 * 86400,), fetch=True)
+                obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado>%s", (corte_aprendido,), fetch=True)
                 for o in obs_aprend:
                     key = (o["linea"], o["sentido"], o["variante"], o["cluster"])
                     aprendido.setdefault(key, []).append(((o["ts"] - o["inicio_ts"]) / 60, o["peso"]))
