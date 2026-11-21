@@ -173,6 +173,12 @@ def error_comunidad(e):
     return jsonify(ok=False, error=str(e)), e.codigo
 
 
+@app.errorhandler(500)
+def error_500(e):
+    import traceback
+    return jsonify(ok=False, error="Internal server error", traceback=traceback.format_exc()), 500
+
+
 def autenticar():
     h = request.headers
     try:
