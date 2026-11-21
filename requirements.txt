@@ -4,3 +4,5 @@ folium
 holidays
 tzdata
 cryptography>=41.0
+gunicorn>=21.0
+psycopg2-binary>=2.9
