@@ -182,55 +182,15 @@ def init_schema() -> None:
 
 
 def _validate_conn(conn) -> bool:
-    """Check if PostgreSQL connection is still alive."""
-    try:
-        conn.cursor().execute("SELECT 1")
-        return True
-    except Exception:
-        return False
-
-
-@contextmanager
+    @contextmanager
 def get_conn():
     """Get a connection from the pool (PostgreSQL) or SQLite connection."""
     if USE_POSTGRES:
-        for attempt in range(3):
-            conn = POOL.getconn()
-            try:
-                if _validate_conn(conn):
-                    try:
-                        yield conn
-                    finally:
-                        POOL.putconn(conn)
-                    return
-                else:
-                    print(f"PostgreSQL connection validation failed, attempt {attempt + 1}/3")
-                    POOL.putconn(conn, close=True)
-            except psycopg2.OperationalError as e:
-                if "SSL" in str(e) or "connection" in str(e).lower() or "EOF" in str(e):
-                    print(f"PostgreSQL SSL/connection error during yield: {e}, attempt {attempt + 1}/3")
-                    try:
-                        POOL.putconn(conn, close=True)
-                    except Exception:
-                        pass
-                    if attempt == 2:
-                        raise
-                    continue
-                else:
-                    try:
-                        POOL.putconn(conn, close=True)
-                    except Exception:
-                        pass
-                    raise
-            except Exception as e:
-                print(f"PostgreSQL connection error: {e}, attempt {attempt + 1}/3")
-                try:
-                    POOL.putconn(conn, close=True)
-                except Exception:
-                    pass
-                if attempt == 2:
-                    raise
-        raise Exception("Failed to get valid PostgreSQL connection after 3 attempts")
+        conn = POOL.getconn()
+        try:
+            yield conn
+        finally:
+            POOL.putconn(conn)
     else:
         yield _get_sqlite_db()
 
