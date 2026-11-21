@@ -22,7 +22,7 @@ USE_POSTGRES = DATABASE_URL and PSYCOPG2_AVAILABLE
 
 if USE_POSTGRES:
     try:
-        POOL = ThreadedConnectionPool(1, 10, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
+        POOL = ThreadedConnectionPool(2, 20, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
     except Exception as e:
         print(f"PostgreSQL connection failed: {e}. Falling back to SQLite.")
         USE_POSTGRES = False
@@ -198,7 +198,10 @@ def get_conn():
             conn = POOL.getconn()
             try:
                 if _validate_conn(conn):
-                    yield conn
+                    try:
+                        yield conn
+                    finally:
+                        POOL.putconn(conn)
                     return
                 else:
                     print(f"PostgreSQL connection validation failed, attempt {attempt + 1}/3")
@@ -214,6 +217,10 @@ def get_conn():
                         raise
                     continue
                 else:
+                    try:
+                        POOL.putconn(conn, close=True)
+                    except Exception:
+                        pass
                     raise
             except Exception as e:
                 print(f"PostgreSQL connection error: {e}, attempt {attempt + 1}/3")
