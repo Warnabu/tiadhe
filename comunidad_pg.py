@@ -82,7 +82,7 @@ class Comunidad:
         with self.lock:
             existing = pg.execute_one("SELECT 1 FROM dispositivos WHERE id=%s", (dev,))
             if not existing:
-                corte = _ts_to_dt(ahora - 86400)
+                corte = int(ahora - 86400)
                 n = pg.execute_one("SELECT COUNT(*) as c FROM registros WHERE ip=%s AND ts>%s", (ip, corte))["c"]
                 if n >= MAX_REGISTROS_IP:
                     raise Error("demasiados dispositivos nuevos desde esta red; inténtalo mañana", 429)
@@ -110,7 +110,7 @@ class Comunidad:
             nonce_key = dev + nonce
             if pg.execute_one("SELECT 1 FROM nonces WHERE n=%s", (nonce_key,)):
                 raise Error("petición repetida", 401)
-            pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, _ts_to_dt(ahora)))
+            pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, int(ahora)))
             pg.cleanup_old_nonces(ahora=ahora)
         return dev
 
@@ -155,7 +155,7 @@ class Comunidad:
 
             if pg.execute_one("SELECT 1 FROM subidas WHERE dev=%s AND viaje=%s", (dev, viaje)):
                 raise Error("ya avisaste de esta guagua", 409)
-            cnt = pg.execute_one("SELECT COUNT(*) as c FROM subidas WHERE dev=%s AND ts>%s", (dev, _ts_to_dt(ahora - 86400)))["c"]
+            cnt = pg.execute_one("SELECT COUNT(*) as c FROM subidas WHERE dev=%s AND ts>%s", (dev, int(ahora - 86400)))["c"]
             if cnt >= MAX_AL_DIA:
                 raise Error(f"máximo {MAX_AL_DIA} avisos al día", 429)
             ult = pg.execute_one("SELECT cluster, ts FROM subidas WHERE dev=%s ORDER BY ts DESC LIMIT 1", (dev,))
@@ -177,12 +177,12 @@ class Comunidad:
                 gps = 1
             rep_ef = self.rep_efectiva(f, ahora)
             peso = self.peso(rep_ef) * (1 if gps else FACTOR_SIN_GPS)
-            ahora_dt = _ts_to_dt(ahora)
+            ahora_int = int(ahora)
             pg.execute("""INSERT INTO subidas(dev,viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,peso,gps)
                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                        (dev, viaje, cluster, pred["linea"], pred["sentido"], pred["variante"],
-                        ahora_dt, pred["llegada_ts"], pred["inicio_ts"], peso, gps))
-            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (ahora_dt, dev))
+                        ahora_int, pred["llegada_ts"], pred["inicio_ts"], peso, gps))
+            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (ahora_int, dev))
             estado = self._evaluar(viaje, cluster, ahora)
             self._snap_ts = 0
             return dict(estado=estado, gps=bool(gps))
@@ -198,8 +198,8 @@ class Comunidad:
             return "pendiente"
         ts = int(mediana_pond([(f["ts"], f["peso"]) for f in acuerdo]))
         base = acuerdo[0]
-        ids_ok = {f["id"] for f in acuerdo}
-        ahora_dt = _ts_to_dt(ahora)
+ids_ok = {f["id"] for f in acuerdo}
+        agora_int = int(ahora)
         for f in filas:
             if f["evaluado"]:
                 continue
@@ -218,13 +218,13 @@ class Comunidad:
                           ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
                           n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
                    (viaje, cluster, base["linea"], base["sentido"], base["variante"],
-                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, ahora_dt))
+                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, agora_int))
         return "confirmada"
 
     def limpiar(self, ahora):
         with self.lock:
-            corte_antiguo = _ts_to_dt(ahora - 90 * 86400)
-            corte_reciente = _ts_to_dt(ahora - 7200)
+            corte_antiguo = int(ahora - 90 * 86400)
+            corte_reciente = int(ahora - 7200)
             pg.execute("DELETE FROM subidas WHERE ts<%s", (corte_antiguo,))
             pg.execute("UPDATE subidas SET estado='sin_confirmar', evaluado=1 WHERE estado='pendiente' AND ts<%s",
                        (corte_reciente,))
@@ -239,8 +239,8 @@ class Comunidad:
         if self._snap is None or abs(ahora - self._snap_ts) > 15:
             with self.lock:
                 viaje, aprendido = {}, {}
-                corte_reciente = _ts_to_dt(ahora - 36 * 3600)
-                corte_aprendido = _ts_to_dt(ahora - 60 * 86400)
+                corte_reciente = int(ahora - 36 * 3600)
+                corte_aprendido = int(ahora - 60 * 86400)
                 obs_recientes = pg.execute("SELECT * FROM observaciones WHERE ts>%s", (corte_reciente,), fetch=True)
                 for o in obs_recientes:
                     viaje.setdefault(o["viaje"], []).append(dict(o))
