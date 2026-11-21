@@ -170,10 +170,13 @@ def init_schema() -> None:
         if _INITIALIZED:
             return
         if USE_POSTGRES:
-            with get_conn() as conn:
+            conn = POOL.getconn()
+            try:
                 with conn.cursor() as cur:
                     cur.execute(PG_SCHEMA)
                     conn.commit()
+            finally:
+                POOL.putconn(conn)
         else:
             db = _get_sqlite_db()
             db.executescript(SQLITE_SCHEMA)
@@ -185,13 +188,16 @@ def init_schema() -> None:
 def transaction():
     """Context manager for a transaction."""
     if USE_POSTGRES:
-        with get_conn() as conn:
+        conn = POOL.getconn()
+        try:
             try:
                 yield conn
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
+        finally:
+            POOL.putconn(conn)
     else:
         db = _get_sqlite_db()
         try:
