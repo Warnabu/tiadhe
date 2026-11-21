@@ -22,7 +22,7 @@ USE_POSTGRES = DATABASE_URL and PSYCOPG2_AVAILABLE
 
 if USE_POSTGRES:
     try:
-        POOL = ThreadedConnectionPool(2, 20, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
+        POOL = ThreadedConnectionPool(1, 5, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
     except Exception as e:
         print(f"PostgreSQL connection failed: {e}. Falling back to SQLite.")
         USE_POSTGRES = False
