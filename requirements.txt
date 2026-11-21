@@ -1,0 +1,6 @@
+flask>=3.0
+requests
+folium
+holidays
+tzdata
+cryptography>=41.0
