@@ -203,6 +203,18 @@ def get_conn():
                 else:
                     print(f"PostgreSQL connection validation failed, attempt {attempt + 1}/3")
                     POOL.putconn(conn, close=True)
+            except psycopg2.OperationalError as e:
+                if "SSL" in str(e) or "connection" in str(e).lower() or "EOF" in str(e):
+                    print(f"PostgreSQL SSL/connection error during yield: {e}, attempt {attempt + 1}/3")
+                    try:
+                        POOL.putconn(conn, close=True)
+                    except Exception:
+                        pass
+                    if attempt == 2:
+                        raise
+                    continue
+                else:
+                    raise
             except Exception as e:
                 print(f"PostgreSQL connection error: {e}, attempt {attempt + 1}/3")
                 try:
