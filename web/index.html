@@ -398,6 +398,9 @@ $('gps').onclick = () => {
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+// Force map size on orientation change / resize
+window.addEventListener('resize', () => { if (window.map) setTimeout(() => map.invalidateSize(), 100); });
+window.addEventListener('orientationchange', () => { if (window.map) setTimeout(() => map.invalidateSize(), 300); });
 
 // ── Onboarding / Mode selection ──
 const onboarding = $('onboarding');
