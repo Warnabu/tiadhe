@@ -18,6 +18,23 @@ def _ts_to_dt(ts: float) -> datetime:
     """Convert Unix timestamp to timezone-aware datetime for PostgreSQL."""
     return datetime.fromtimestamp(ts, TZ)
 
+def _dt_to_ts(dt) -> float:
+    """Convert datetime (from PostgreSQL) to Unix timestamp."""
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ)
+        return dt.timestamp()
+    if isinstance(dt, str):
+        # Parse PostgreSQL timestamp with time zone string
+        try:
+            parsed = datetime.fromisoformat(dt.replace(' ', 'T'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=TZ)
+            return parsed.timestamp()
+        except Exception:
+            pass
+    return float(dt)
+
 # ------------------------------------------------ parámetros (ajustables)
 REP_INICIAL, PESO_MIN, PESO_MAX = 20.0, 0.35, 0.90
 FACTOR_SIN_GPS = 0.4
@@ -117,7 +134,8 @@ class Comunidad:
     # ------------------------------------------------------------ reputación
     @staticmethod
     def rep_efectiva(fila, ahora):
-        dias = max(0, (ahora - fila["ult"]) / 86400)
+        ult_ts = _dt_to_ts(fila["ult"])
+        dias = max(0, (ahora - ult_ts) / 86400)
         return fila["rep"] if dias < 30 else REP_INICIAL + (fila["rep"] - REP_INICIAL) * 0.5 ** (dias / 90)
 
     @staticmethod
@@ -142,12 +160,13 @@ class Comunidad:
             f = pg.execute_one("SELECT * FROM dispositivos WHERE id=%s", (dev,))
             if not f:
                 raise Error("dispositivo no encontrado", 401)
-            if f["bloqueado"] > ahora:
+            if _dt_to_ts(f["bloqueado"]) > ahora:
                 raise Error("tus avisos están pausados por avisos imposibles repetidos; vuelve mañana", 429)
 
             def rechazar(msg, castigo=True):
                 if castigo:
-                    st = f["strikes"] + 1 if ahora - f["strikes_ts"] < 86400 else 1
+                    strikes_ts = _dt_to_ts(f["strikes_ts"])
+                    st = f["strikes"] + 1 if ahora - strikes_ts < 86400 else 1
                     ahora_dt = _ts_to_dt(ahora)
                     pg.execute("""UPDATE dispositivos SET strikes=%s, strikes_ts=%s, rep=MAX(0, rep-2), bloqueado=%s WHERE id=%s""",
                                (st, ahora_dt, _ts_to_dt(ahora + 86400) if st >= 6 else _ts_to_dt(0), dev))
@@ -198,7 +217,7 @@ class Comunidad:
             return "pendiente"
         ts = int(mediana_pond([(f["ts"], f["peso"]) for f in acuerdo]))
         base = acuerdo[0]
-        ids_ok = {f["id"] for f in acordo}
+        ids_ok = {f["id"] for f in acuerdo}
         agora_int = int(ahora)
         for f in filas:
             if f["evaluado"]:
@@ -244,7 +263,7 @@ class Comunidad:
                 obs_recientes = pg.execute("SELECT * FROM observaciones WHERE ts>%s", (corte_reciente,), fetch=True)
                 for o in obs_recientes:
                     viaje.setdefault(o["viaje"], []).append(dict(o))
-                obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado > to_timestamp(%s)", (corte_aprendido,), fetch=True)
+                obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado > %s", (corte_aprendido,), fetch=True)
                 for o in obs_aprend:
                     key = (o["linea"], o["sentido"], o["variante"], o["cluster"])
                     aprendido.setdefault(key, []).append(((o["ts"] - o["inicio_ts"]) / 60, o["peso"]))
