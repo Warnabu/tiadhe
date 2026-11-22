@@ -240,10 +240,11 @@ def prediccion_viaje(viaje, ids, horarios, base, com=None):
                 destino=nombre_destino(seq[-1], base[num]))
 
 
-def proximas(objetivo, ahora, horarios, base, com=None, gracia=1):
+def proximas(objetivo, ahora, horarios, base, com=None, gracia=1, modo="dinamico"):
     """objetivo: {'nombre', 'ids' (paradas concretas) | 'nombres' | 'lat','lon'}. Devuelve las salidas ordenadas."""
     res, memo = [], {}
     ids, nombres = objetivo.get("ids"), objetivo.get("nombres") or {norm(objetivo["nombre"])}
+    usar_comunidad = com is not None and modo == "dinamico"
     for dia_off in (-1, 0, 1):
         fecha = ahora.date() + timedelta(days=dia_off)
         dia = tipo_dia(fecha)
@@ -266,7 +267,7 @@ def proximas(objetivo, ahora, horarios, base, com=None, gracia=1):
                 if hit is None or hit["km"] >= seq[-1]["km"] - 1e-6:
                     continue  # no pasa por aquí, o es el final del trayecto
                 off = minutos(hit, base[num])
-                viaje, usable = clave_viaje(fecha, num, s), com is not None and not aprox and hit.get("id")
+                viaje, usable = clave_viaje(fecha, num, s), usar_comunidad and not aprox and hit.get("id")
                 if usable:  # lo aprendido por la comunidad mejora la estimación del modelo
                     off = com.aprendido(num, s["s"], variante_de(s), hit["id"], off) or off
                 h, m = map(int, s["h"].split(":"))

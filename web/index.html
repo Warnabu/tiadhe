@@ -67,6 +67,12 @@
   /* Dynamic mode badge */
   .modo-dinamico { background:var(--verde); color:#fff; font-size:11px; padding:2px 8px; border-radius:8px; margin-left:6px; }
   .modo-fijo { background:var(--gris); color:#fff; font-size:11px; padding:2px 8px; border-radius:8px; margin-left:6px; }
+  /* Mode selector */
+  #modo-selector { position:absolute; z-index:1000; top:10px; right:10px; background:var(--fondo); border:1px solid var(--borde);
+                   border-radius:12px; padding:8px 12px; font-size:13px; box-shadow:0 2px 8px #0003; display:flex; align-items:center; gap:8px; }
+  #modo-selector label { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px; }
+  #modo-selector input[type="checkbox"] { width:18px; height:18px; accent-color:var(--verde); }
+  #modo-selector .tooltip { color:var(--gris); font-size:11px; margin-left:4px; }
   /* Nearby stop hint */
   #cerca-hint { position:absolute; z-index:1000; bottom:10px; left:10px; right:10px; max-width:420px;
                 background:var(--fondo); border:1px solid var(--borde); border-radius:12px; padding:10px 14px;
@@ -88,6 +94,13 @@
 <div id="cerca-hint"></div>
 <div id="perfil" class="oculto"></div>
 <div id="auth-controls" style="position:absolute; z-index:1000; top:10px; right:10px; display:flex; gap:8px; align-items:center;"></div>
+<div id="modo-selector">
+  <label>
+    <input type="checkbox" id="modo-dinamico-toggle">
+    <span id="modo-label">Modo dinámico</span>
+    <span class="tooltip" id="modo-tooltip">Tiempo real + comunidad</span>
+  </label>
+</div>
 <div id="barra">
   <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off"><button id="gps" title="Paradas cerca de mí">📍</button></div>
   <div id="sug" class="oculto"></div>
@@ -232,7 +245,11 @@ function elegir(p) {
 async function cargar() {
   if (!actual) return;
   const p = actual;
-  const url = p.tipo === 'osm' ? `/api/cerca?lat=${p.lat}&lon=${p.lon}&nombre=${encodeURIComponent(p.nombre)}` : `/api/parada/${p.id}`;
+  const modo = Guaguas.getModoDinamico() ? 'dinamico' : 'estatico';
+  const sep = p.tipo === 'osm' ? '&' : '?';
+  const url = (p.tipo === 'osm'
+    ? `/api/cerca?lat=${p.lat}&lon=${p.lon}&nombre=${encodeURIComponent(p.nombre)}`
+    : `/api/parada/${p.id}`) + sep + `modo=${modo}`;
   try { pintar(await json(url), p); }
   catch (e) { $('lista').innerHTML = '<div class="msg">No se pudo cargar. ¿Está el servidor en marcha?</div>'; }
 }
@@ -356,6 +373,72 @@ if (window.firebaseAuth) {
 } else {
   renderAuthUI(null);
 }
+
+// ── Modo dinámico / estático ──
+const modoToggle = $('modo-dinamico-toggle');
+const modoLabel = $('modo-label');
+const modoTooltip = $('modo-tooltip');
+
+function actualizarModoUI(dinamico) {
+  modoToggle.checked = dinamico;
+  if (dinamico) {
+    modoLabel.textContent = 'Modo dinámico';
+    modoTooltip.textContent = 'Tiempo real + comunidad';
+    modoLabel.style.color = 'var(--verde)';
+    modoTooltip.style.color = 'var(--verde)';
+  } else {
+    modoLabel.textContent = 'Modo estático';
+    modoTooltip.textContent = 'Solo horarios oficiales';
+    modoLabel.style.color = 'var(--gris)';
+    modoTooltip.style.color = 'var(--gris)';
+  }
+}
+
+async function cambiarModo(dinamico) {
+  if (dinamico) {
+    // Requiere sesión de Google
+    const auth = window.firebaseAuth;
+    if (!auth) {
+      alert('Firebase Auth no disponible');
+      return false;
+    }
+    const { getAuth, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const currentUser = getAuth().currentUser;
+    if (!currentUser) {
+      // Pedir login
+      const confirmado = confirm('El modo dinámico requiere iniciar sesión con Google. ¿Quieres hacerlo ahora?');
+      if (!confirmado) return false;
+      try {
+        await window.firebaseSignIn();
+        // Esperar a que se complete el login
+        await new Promise(res => {
+          const unsub = onAuthStateChanged(auth, (user) => {
+            if (user) { unsub(); res(); }
+          });
+        });
+      } catch (e) {
+        alert('Error al iniciar sesión: ' + e.message);
+        return false;
+      }
+    }
+  }
+  Guaguas.setModoDinamico(dinamico);
+  actualizarModoUI(dinamico);
+  // Recargar panel si hay parada seleccionada
+  if (actual) cargar();
+  return true;
+}
+
+modoToggle.addEventListener('change', async (e) => {
+  const ok = await cambiarModo(e.target.checked);
+  if (!ok) {
+    modoToggle.checked = !e.target.checked; // revertir
+  }
+});
+
+Guaguas.onModoChange(actualizarModoUI);
+// Inicializar UI
+actualizarModoUI(Guaguas.getModoDinamico());
 
 Guaguas.onPerfil(p => {
   const el = $('perfil');

@@ -206,14 +206,14 @@ def ahora_local():
     return datetime.now(TZ).replace(tzinfo=None)
 
 
-def tablero(clave, objetivo, ahora, por_destino=6):
-    k = (clave, ahora.strftime("%Y%m%d%H%M"))  # las respuestas cambian como mucho cada minuto
+def tablero(clave, objetivo, ahora, por_destino=6, modo="dinamico"):
+    k = (clave, ahora.strftime("%Y%m%d%H%M"), modo)  # las respuestas cambian como mucho cada minuto
     if k in _cache:
         return _cache[k]
     if len(_cache) > 800:
         _cache.clear()
     grupos = {}
-    for r in g.proximas(objetivo, ahora, HORARIOS, BASE, com=COM, gracia=1):
+    for r in g.proximas(objetivo, ahora, HORARIOS, BASE, com=COM, gracia=1, modo=modo):
         lista = grupos.setdefault(r["destino"], [])
         if sum(1 for x in lista if x["linea"] == r["linea"]) < 3 and len(lista) < por_destino:
             dif = (r["llegada"] - ahora).total_seconds() / 60
@@ -316,7 +316,8 @@ def api_parada(pid):
     gr = PARADAS.get(pid)
     if not gr:
         raise Error("parada desconocida", 404)
-    d = dict(tablero(pid, dict(nombre=gr["nombre"], ids=gr["ids"]), ahora_local()))
+    modo = request.args.get("modo", "dinamico")
+    d = dict(tablero(pid, dict(nombre=gr["nombre"], ids=gr["ids"]), ahora_local(), modo=modo))
     d["parada"] = dict(id=pid, nombre=gr["nombre"], lineas=sorted(gr["lineas"]))
     return jsonify(d)
 
@@ -353,7 +354,8 @@ def api_cerca():
     except ValueError:
         raise Error("lat/lon no son números", 400)
     nombre = request.args.get("nombre", "Parada")[:80]
-    d = dict(tablero(("osm", round(lat, 5), round(lon, 5)), dict(nombre=nombre, lat=lat, lon=lon), ahora_local()))
+    modo = request.args.get("modo", "dinamico")
+    d = dict(tablero(("osm", round(lat, 5), round(lon, 5)), dict(nombre=nombre, lat=lat, lon=lon), ahora_local(), modo=modo))
     d["parada"] = dict(id="osm", nombre=nombre, lineas=[], aprox=True)
     return jsonify(d)
 

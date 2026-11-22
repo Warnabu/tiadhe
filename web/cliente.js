@@ -27,12 +27,20 @@ const Guaguas = (() => {
     return new Promise((res, rej) => {
       const tx = db.transaction("claves", "readonly");
       const q = tx.objectStore("claves").get(k);
-      q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+      q.onsuccess = () => res(q.result); q.onerror = () => rej(tx.error);
     });
   }
 
   let db, priv, pub, dev, perfil = null, cambioPerfil = () => {};
   let internalToken = null;
+  let modoDinamico = localStorage.getItem('modoDinamico') === 'true';
+  let cambioModo = () => {};
+
+  function setModoDinamico(valor) {
+    modoDinamico = Boolean(valor);
+    localStorage.setItem('modoDinamico', String(modoDinamico));
+    cambioModo(modoDinamico);
+  }
 
   async function id_de(pubRaw) {
     return hex(await crypto.subtle.digest("SHA-256", pubRaw)).slice(0, 32);
@@ -161,5 +169,8 @@ const Guaguas = (() => {
     perfil: () => perfil,
     signIn: () => window.firebaseSignIn?.(),
     signOut: () => window.firebaseSignOut?.(),
+    getModoDinamico: () => modoDinamico,
+    setModoDinamico,
+    onModoChange: f => { cambioModo = f; f(modoDinamico); },
   };
 })();
