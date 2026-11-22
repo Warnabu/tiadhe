@@ -110,7 +110,7 @@ class Comunidad:
                 if n >= MAX_REGISTROS_IP:
                     raise Error("demasiados dispositivos nuevos desde esta red; inténtalo mañana", 429)
                 ahora_dt = _ts_to_dt(ahora)
-                pg.execute("INSERT INTO registros VALUES(%s,%s)", (ip, ahora_dt))
+                pg.execute("INSERT INTO registros VALUES(%s,%s)", (ip, int(ahora)))
                 pg.execute("INSERT INTO dispositivos(id,pub,creado,ult,rep) VALUES(%s,%s,%s,%s,%s)",
                            (dev, raw, ahora_dt, ahora_dt, REP_INICIAL))
         return dev, raw
