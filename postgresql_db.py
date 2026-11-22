@@ -39,15 +39,15 @@ PG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS dispositivos (
     id TEXT PRIMARY KEY,
     pub BYTEA NOT NULL,
-    creado BIGINT NOT NULL,
-    ult BIGINT NOT NULL,
+    creado TIMESTAMPTZ NOT NULL,
+    ult TIMESTAMPTZ NOT NULL,
     rep REAL NOT NULL DEFAULT 20.0,
     confirmadas INT NOT NULL DEFAULT 0,
     discrepantes INT NOT NULL DEFAULT 0,
     subidas INT NOT NULL DEFAULT 0,
     strikes INT NOT NULL DEFAULT 0,
-    strikes_ts BIGINT NOT NULL DEFAULT 0,
-    bloqueado BIGINT NOT NULL DEFAULT 0,
+    strikes_ts TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
+    bloqueado TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
     firebase_uid TEXT,
     apple_uid TEXT,
     fcm_token TEXT
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS observaciones (
     inicio_ts BIGINT NOT NULL,
     n INT NOT NULL,
     peso REAL NOT NULL,
-    creado BIGINT NOT NULL,
+    creado TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (viaje, cluster)
 );
 
@@ -285,16 +285,16 @@ def execute_one(query: str, params: Tuple = ()) -> Optional[Dict[str, Any]]:
             raise
 
 
-def cleanup_old_nonces(max_age_seconds: int = 600, agora: int = None) -> None:
+def cleanup_old_nonces(max_age_seconds: int = 600, ahora: int = None) -> None:
     """Remove expired nonces."""
-    if agora is None:
-        agora = int(time.time())
-    corte = agora - max_age_seconds
+    if ahora is None:
+        ahora = int(time.time())
+    corte = ahora - max_age_seconds
     execute("DELETE FROM nonces WHERE ts < %s", (corte,))
 
-def cleanup_old_ubicaciones(max_age_seconds: int = 300, agora: int = None) -> None:
+def cleanup_old_ubicaciones(max_age_seconds: int = 300, ahora: int = None) -> None:
     """Remove stale active locations."""
-    if agora is None:
-        agora = int(time.time())
-    corte = agora - max_age_seconds
+    if ahora is None:
+        ahora = int(time.time())
+    corte = ahora - max_age_seconds
     execute("DELETE FROM ubicaciones_activas WHERE ts < %s", (corte,))

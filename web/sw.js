@@ -1,5 +1,5 @@
 // Service Worker para Guaguas FTV - PWA con cache offline
-const CACHE_NAME = 'guaguas-ftv-v1';
+const CACHE_NAME = 'guaguas-ftv-v3';
 const STATIC_ASSETS = [
   '/',
   '/cliente.js',
@@ -7,8 +7,7 @@ const STATIC_ASSETS = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-  'https://tile.openstreetmap.org/'
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
 
 // Install - cache static assets

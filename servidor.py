@@ -93,19 +93,6 @@ def send_fcm_push(token: str, title: str, body: str, data: dict = None) -> bool:
             print(f"FCM send failed: {e}")
         return False
 
-if not hasattr(g, "nombre_destino"):
-    raise SystemExit("guaguas.py es una versión antigua: sustitúyelo por el último y reinicia el servidor. \nLos archivos guaguas.py, servidor.py, importar_mapas.py y web/index.html deben ser de la misma entrega.")
-
-TZ = ZoneInfo("Atlantic/Canary")
-DEBUG = bool(os.environ.get("GUAGUAS_DEBUG"))
-app = Flask(__name__, static_folder="web", static_url_path="")
-HORARIOS, BASE = g.cargar()
-_osm = g.DATOS / "paradas_osm.json"
-OSM = [p for p in json.loads(_osm.read_text(encoding="utf-8")) if p["nombre"]] if _osm.exists() else []
-DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-COLOR = {num: g.COLORES[i % len(g.COLORES)] for i, num in enumerate(BASE)}
-
-
 def agrupar(radio_km=0.06, BASE=None):
     """Une las paradas (de cualquier línea) a menos de ~60 m: una parada física con sus dos sentidos
     es un único punto del mapa. Se conservan los ids de cada parada concreta de cada línea."""
@@ -337,9 +324,11 @@ def api_debug_pool():
 
 @app.get("/api/debug/version")
 def api_debug_version():
-    import subprocess
+    import subprocess, os
     try:
-        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd='/opt/render/project/src').decode().strip()
+        # Use current working directory or __file__ location
+        cwd = os.path.dirname(os.path.abspath(__file__))
+        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=cwd).decode().strip()
     except Exception:
         git_hash = "unknown"
     return jsonify(git_hash=git_hash, deploy_time="2026-11-21")
@@ -383,18 +372,14 @@ def api_firebase_token():
 
 @app.post("/api/register-fcm-token")
 def api_register_fcm_token():
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise Error("falta Authorization Bearer", 401)
-    token = auth_header[7:]
-    claims = verify_internal_token(token)
-    uid = claims["uid"]
+    # Verify device signature (X-Dispositivo, X-Ts, X-Nonce, X-Firma)
+    dev = autenticar()
     d = request.get_json(silent=True) or {}
     fcm_token = d.get("fcm_token")
     if not fcm_token:
         raise Error("falta fcm_token", 400)
     try:
-        COM.guardar_fcm_token(uid, fcm_token)
+        COM.guardar_fcm_token(dev, fcm_token)
     except Exception:
         pass
     return jsonify(ok=True)
@@ -402,13 +387,9 @@ def api_register_fcm_token():
 
 @app.post("/api/test-push")
 def api_test_push():
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise Error("falta Authorization Bearer", 401)
-    token = auth_header[7:]
-    claims = verify_internal_token(token)
-    uid = claims["uid"]
-    fcm_token = COM.obtener_fcm_token(uid)
+    # Verify device signature
+    dev = autenticar()
+    fcm_token = COM.obtener_fcm_token(dev)
     if not fcm_token:
         raise Error("no hay token FCM registrado", 400)
     ok = send_fcm_push(fcm_token, "Guaguas FTV", "Notificación de prueba desde el backend")

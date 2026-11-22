@@ -238,13 +238,14 @@ class Comunidad:
                            (BAJA, f["dev"]))
                 est = "discrepante"
             pg.execute("UPDATE subidas SET estado=%s, evaluado=1 WHERE id=%s", (est, f["id"]))
+        agora_dt = _ts_to_dt(agora_int)
         pg.execute("""INSERT INTO observaciones(viaje,cluster,linea,sentido,variante,ts,pred_ts,inicio_ts,n,peso,creado)
                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                       ON CONFLICT (viaje, cluster) DO UPDATE SET
                           ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
                           n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
                    (viaje, cluster, base["linea"], base["sentido"], base["variante"],
-                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, agora_int))
+                    ts, int(base["pred_ts"]), base["inicio_ts"], len(acuerdo), peso, agora_dt))
         return "confirmada"
 
     def limpiar(self, ahora):
@@ -306,14 +307,14 @@ class Comunidad:
             return dict(llegada=llegada + timedelta(minutes=retraso), prec="vivo", n=o["n"], retraso=retraso)
         return None
 
-    def guardar_fcm_token(self, uid: str, fcm_token: str):
+    def guardar_fcm_token(self, dev_id: str, fcm_token: str):
         with self.lock:
             pg.execute(
                 "INSERT INTO dispositivos (id, fcm_token) VALUES (%s, %s) "
                 "ON CONFLICT (id) DO UPDATE SET fcm_token=EXCLUDED.fcm_token",
-                (uid, fcm_token)
+                (dev_id, fcm_token)
             )
 
-    def obtener_fcm_token(self, uid: str) -> str:
-        row = pg.execute_one("SELECT fcm_token FROM dispositivos WHERE id=%s", (uid,))
+    def obtener_fcm_token(self, dev_id: str) -> str:
+        row = pg.execute_one("SELECT fcm_token FROM dispositivos WHERE id=%s", (dev_id,))
         return row["fcm_token"] if row and row["fcm_token"] else None

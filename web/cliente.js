@@ -72,11 +72,7 @@ const Guaguas = (() => {
   async function registrarFCMToken(fcmToken) {
     if (!internalToken) return;
     try {
-      await fetch("/api/register-fcm-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + internalToken },
-        body: JSON.stringify({ fcm_token: fcmToken })
-      });
+      await pedir("POST", "/api/register-fcm-token", { fcm_token: fcmToken });
     } catch (e) {
       console.warn("No se pudo registrar FCM token:", e.message);
     }
@@ -87,7 +83,7 @@ const Guaguas = (() => {
     try {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") return;
-      const vapidKey = window.VAPID_KEY || "TU_VAPID_KEY_AQUI";
+      const vapidKey = window.VAPID_KEY;
       const token = await getToken(window.firebaseMessaging, { vapidKey });
       if (token) {
         await registrarFCMToken(token);

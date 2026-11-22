@@ -195,19 +195,6 @@ window.addEventListener("DOMContentLoaded", function() {
 });
 </script>
 <script src="/cliente.js"></script>
-
-  <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off"><button id="gps" title="Paradas cerca de mí">📍</button></div>
-  <div id="sug" class="oculto"></div>
-</div>
-<div id="panel" class="oculto">
-  <button id="cerrar" aria-label="Cerrar">×</button>
-  <h2 id="pnombre"></h2>
-  <div class="sub" id="preloj"></div>
-  <div id="chips"></div>
-  <div id="lista"></div>
-  <p id="aviso"></p>
-</div>
-
 <script>
 const $ = id => document.getElementById(id);
 const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -516,21 +503,18 @@ async function seleccionarModo(dinamico) {
     if (!auth) { alert('Firebase Auth no disponible'); return false; }
     
     const { getAuth, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
-    const currentUser = getAuth().currentUser;
     
-    if (!currentUser) {
-      // Guardar intención para después del redirect
+    // Check if user is already logged in
+    if (getAuth().currentUser) {
+      // Already logged in, just set mode
+    } else {
+      // Not logged in, need to authenticate
       sessionStorage.setItem('pendingDinamico', 'true');
       await loginGoogle();
-      // Si fue popup, esperar usuario
-      if (currentUser === null) {
-        await new Promise(res => {
-          const unsub = onAuthStateChanged(auth, (user) => {
-            if (user) { unsub(); res(); }
-          });
-        });
-      }
-      // Si fue redirect, la página se recarga y handleRedirectResult continua
+      // loginGoogle() handles popup vs redirect:
+      // - popup: returns after user signs in
+      // - redirect: page reloads, handleRedirectResult() will continue
+      return true; // For redirect case, we return early (page will reload)
     }
   }
   Guaguas.setModoDinamico(dinamico);
@@ -546,10 +530,14 @@ btnEstatico.onclick = async () => {
 btnDinamico.onclick = async () => {
   const ok = await seleccionarModo(true);
   if (ok) {
+    // For popup case, user is now logged in; for redirect, page reloads and handleRedirectResult handles it
     const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
     const user = getAuth().currentUser;
-    actualizarModoUI(true, user);
-    ocultarOnboarding();
+    if (user) {
+      actualizarModoUI(true, user);
+      ocultarOnboarding();
+    }
+    // If no user (redirect case), handleRedirectResult will continue after reload
   }
 };
 
@@ -570,7 +558,9 @@ menuCambiarModo.onclick = async () => {
     if (ok) {
       const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
       const user = getAuth().currentUser;
-      actualizarModoUI(true, user);
+      if (user) {
+        actualizarModoUI(true, user);
+      }
     }
   } else {
     Guaguas.setModoDinamico(false);
@@ -607,13 +597,8 @@ if (window.firebaseAuth) {
       } else {
         actualizarModoUI(Guaguas.getModoDinamico(), null);
       }
-      // Si hay onboarding visible y usuario logueado, puede continuar
-      if (user && sessionStorage.getItem('pendingDinamico')) {
-        sessionStorage.removeItem('pendingDinamico');
-        Guaguas.setModoDinamico(true);
-        actualizarModoUI(true, user);
-        ocultarOnboarding();
-      }
+      // Note: pendingDinamico handling is done in handleRedirectResult() after redirect
+      // and in btnDinamico.onclick after popup
     });
   });
 }
