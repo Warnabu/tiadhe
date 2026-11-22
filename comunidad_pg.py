@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 import postgresql_db as pg
 
 TZ = ZoneInfo("Atlantic/Canary")
+USE_POSTGRES = pg.USE_POSTGRES
 
 def _ts_to_dt(ts: float) -> datetime:
     """Convert Unix timestamp to timezone-aware datetime for PostgreSQL."""
@@ -269,7 +270,10 @@ class Comunidad:
                 obs_recientes = pg.execute("SELECT * FROM observaciones WHERE ts>%s", (corte_reciente,), fetch=True)
                 for o in obs_recientes:
                     viaje.setdefault(o["viaje"], []).append(dict(o))
-                obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado > %s", (corte_aprendido,), fetch=True)
+                if USE_POSTGRES:
+                    obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado > to_timestamp(%s)", (corte_aprendido,), fetch=True)
+                else:
+                    obs_aprend = pg.execute("SELECT * FROM observaciones WHERE creado > %s", (corte_aprendido,), fetch=True)
                 for o in obs_aprend:
                     key = (o["linea"], o["sentido"], o["variante"], o["cluster"])
                     aprendido.setdefault(key, []).append(((o["ts"] - o["inicio_ts"]) / 60, o["peso"]))
