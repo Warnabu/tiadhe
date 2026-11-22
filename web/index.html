@@ -324,14 +324,24 @@ function elegir(p) {
     }
   }
   const map = window.map;
-  if (!map._container || map._container.clientWidth === 0) {
+  if (!map || !map._container || map._container.clientWidth === 0) {
     console.warn('Map container has no size, forcing resize...');
     const mc = document.getElementById('map');
     if (mc) mc.style.height = '100vh';
-    map.invalidateSize();
+    if (window.map) window.map.invalidateSize();
+    return; // Wait for next call after resize
   }
-  if (marcaSel) window.map.removeLayer(marcaSel);
-  marcaSel = L.circleMarker([p.lat, p.lon], { radius: 14, color: '#e6194b', weight: 3, fill: false }).addTo(window.map);
+  // Clear any existing selection marker
+  if (marcaSel) {
+    try { window.map.removeLayer(marcaSel); } catch (e) { console.warn('removeLayer failed:', e); }
+    marcaSel = null;
+  }
+  try {
+    marcaSel = L.circleMarker([p.lat, p.lon], { radius: 14, color: '#e6194b', weight: 3, fill: false }).addTo(window.map);
+  } catch (e) {
+    console.error('addTo failed:', e);
+    return;
+  }
   $('pnombre').textContent = p.nombre;
   $('panel').classList.remove('oculto');
   $('sug').classList.add('oculto');
