@@ -36,6 +36,11 @@ const Guaguas = (() => {
   let modoDinamico = localStorage.getItem('modoDinamico') === 'true';
   let cambioModo = () => {};
 
+  function setInternalToken(token) {
+    internalToken = token;
+    if (token) inicializarFirebase();
+  }
+
   function setModoDinamico(valor) {
     modoDinamico = Boolean(valor);
     localStorage.setItem('modoDinamico', String(modoDinamico));
@@ -119,30 +124,8 @@ const Guaguas = (() => {
       console.warn("No se pudo registrar el dispositivo:", e.message);
     }
 
-    if (window.firebaseAuth) {
-      const { onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
-      onAuthStateChanged(window.firebaseAuth, async (user) => {
-        if (user) {
-          const idToken = await user.getIdToken();
-          try {
-            const resp = await fetch("/api/firebase-token", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id_token: idToken })
-            });
-            const data = await resp.json();
-            if (data.ok && data.token) {
-              internalToken = data.token;
-              await inicializarFirebase();
-            }
-          } catch (e) {
-            console.warn("Error intercambiando token Firebase:", e.message);
-          }
-        } else {
-          internalToken = null;
-        }
-      });
-    }
+    // Firebase token exchange now handled in index.html to avoid duplication
+    // Just listen for internalToken changes if needed elsewhere
 
     return dev;
   }
@@ -171,6 +154,7 @@ const Guaguas = (() => {
     signOut: () => window.firebaseSignOut?.(),
     getModoDinamico: () => modoDinamico,
     setModoDinamico,
-    onModoChange: f => { cambioModo = f; f(modoDinamico); },
+    onModoChange: f => { cambioModo = f; Promise.resolve(f(modoDinamico)); },
+    setInternalToken,
   };
 })();

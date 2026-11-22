@@ -82,26 +82,115 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="loc-banner">
-  <button class="cerrar" onclick="cerrarBanner()">×</button>
-  <h3>📍 Activa tu ubicación</h3>
-  <p>Necesitamos tu ubicación para calcular mejor los tiempos de llegada y mostrarte las paradas más cercanas.</p>
-  <div style="display:flex;gap:8px">
-    <button onclick="pedirUbicacion()">Activar ubicación</button>
-    <button class="sec" onclick="cerrarBanner()">Ahora no</button>
+
+<!-- Onboarding modal - shows first time or when no mode selected -->
+<div id="onboarding" class="oculto" style="position:fixed; inset:0; z-index:2000; background:var(--fondo); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;">
+  <div style="max-width:360px; width:100%; text-align:center;">
+    <div style="font-size:56px; margin-bottom:16px;">🚌</div>
+    <h1 style="margin:0 0 8px; font-size:28px; color:var(--texto);">Guaguas Fuerteventura</h1>
+    <p style="color:var(--gris); margin:0 0 28px; font-size:15px; line-height:1.5;">Horarios y tiempos reales de guaguas en Fuerteventura. Elige cómo quieres usar la app.</p>
+    
+    <button id="btn-estatico" style="display:block; width:100%; padding:16px 20px; margin-bottom:12px; background:var(--fondo); border:2px solid var(--borde); border-radius:14px; font-size:16px; color:var(--texto); cursor:pointer; text-align:left; box-shadow:0 2px 8px #0003;">
+      <div style="font-weight:600; color:var(--gris);">Modo estático</div>
+      <div style="font-size:13px; color:var(--gris); margin-top:4px;">Solo horarios oficiales · Sin cuenta · Funciona offline</div>
+    </button>
+    
+    <button id="btn-dinamico" style="display:block; width:100%; padding:16px 20px; margin-bottom:12px; background:linear-gradient(135deg, var(--verde), #156b2d); border:0; border-radius:14px; font-size:16px; color:#fff; cursor:pointer; text-align:left; box-shadow:0 4px 16px #1a7f3740;">
+      <div style="font-weight:600;">Modo dinámico</div>
+      <div style="font-size:13px; opacity:.9; margin-top:4px;">Tiempo real + comunidad · Requiere Google · Notificaciones push</div>
+    </button>
+    
+    <p style="font-size:12px; color:var(--gris); margin-top:16px;">Puedes cambiar de modo después en ajustes.</p>
   </div>
 </div>
-<div id="cerca-hint"></div>
-<div id="perfil" class="oculto"></div>
-<div id="auth-controls" style="position:absolute; z-index:1000; top:10px; right:10px; display:flex; gap:8px; align-items:center;"></div>
-<div id="modo-selector">
-  <label>
-    <input type="checkbox" id="modo-dinamico-toggle">
-    <span id="modo-label">Modo dinámico</span>
-    <span class="tooltip" id="modo-tooltip">Tiempo real + comunidad</span>
-  </label>
+
+<!-- Location banner -->
+<div id="loc-banner" style="position:absolute; z-index:1001; top:10px; left:10px; right:10px; max-width:420px; background:linear-gradient(135deg, var(--azul), #085a7f); color:#fff; border-radius:16px; padding:14px 16px; box-shadow:0 4px 16px #0004; display:none;">
+  <button class="cerrar" onclick="cerrarBanner()" style="position:absolute; top:8px; right:10px; background:none; border:0; color:#fff; font-size:20px; cursor:pointer; opacity:.7;">×</button>
+  <h3 style="margin:0 0 6px; font-size:15px;">📍 Activa tu ubicación</h3>
+  <p style="margin:0 0 10px; font-size:13px; opacity:.9;">Necesitamos tu ubicación para calcular mejor los tiempos de llegada y mostrarte las paradas más cercanas.</p>
+  <div style="display:flex;gap:8px">
+    <button onclick="pedirUbicacion()" style="background:#fff; color:var(--azul); border:0; border-radius:10px; padding:8px 16px; font-weight:600; cursor:pointer; font-size:14px;">Activar ubicación</button>
+    <button class="sec" onclick="cerrarBanner()" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,.5); border-radius:10px; padding:8px 16px; font-weight:600; cursor:pointer; font-size:14px;">Ahora no</button>
+  </div>
 </div>
-<div id="barra">
+
+<div id="cerca-hint" style="position:absolute; z-index:1000; bottom:10px; left:10px; right:10px; max-width:420px; background:var(--fondo); border:1px solid var(--borde); border-radius:12px; padding:10px 14px; font-size:13px; box-shadow:0 2px 8px #0003; display:none;"></div>
+
+<!-- Top bar: search + GPS + user menu -->
+<div id="topbar" style="position:absolute; z-index:1000; top:10px; left:10px; right:10px; max-width:420px; display:flex; gap:8px; align-items:center;">
+  <div id="modo-badge" style="flex:1; display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--fondo); border:1px solid var(--borde); border-radius:12px; box-shadow:0 2px 8px #0003;">
+    <span id="modo-icon" style="font-size:16px;">🚌</span>
+    <span id="modo-text" style="font-size:13px; font-weight:500; color:var(--texto);">Modo estático</span>
+    <span id="modo-chevron" style="margin-left:auto; color:var(--gris); font-size:18px;">›</span>
+  </div>
+  <button id="btn-perfil" class="oculto" style="width:40px; height:40px; background:var(--fondo); border:1px solid var(--borde); border-radius:12px; box-shadow:0 2px 8px #0003; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+    <span style="font-size:18px;">👤</span>
+  </button>
+</div>
+
+<!-- Search bar (below topbar) -->
+<div id="barra" style="position:absolute; z-index:1000; top:66px; left:10px; right:10px; max-width:420px;">
+  <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off" style="flex:1; padding:11px 14px; border:1px solid var(--borde); border-radius:12px; font-size:16px; background:var(--fondo); color:var(--texto); box-shadow:0 2px 8px #0003;"><button id="gps" title="Paradas cerca de mí" style="border:1px solid var(--borde); background:var(--fondo); border-radius:12px; padding:0 14px; font-size:20px; box-shadow:0 2px 8px #0003; cursor:pointer;">📍</button></div>
+  <div id="sug" class="oculto" style="background:var(--fondo); border-radius:12px; margin-top:6px; box-shadow:0 2px 8px #0003; overflow:hidden;"></div>
+</div>
+
+<div id="panel" class="oculto" style="position:absolute; z-index:1000; left:0; right:0; bottom:0; max-height:58vh; overflow:auto; background:var(--fondo); border-radius:18px 18px 0 0; box-shadow:0 -4px 16px #0004; padding:14px 16px 20px;">
+  <button id="cerrar" aria-label="Cerrar" style="position:absolute; top:8px; right:10px; border:0; background:none; font-size:26px; color:var(--gris); cursor:pointer;">×</button>
+  <h2 id="pnombre" style="margin:0 34px 2px 0; font-size:19px;"></h2>
+  <div class="sub" id="preloj" style="color:var(--gris); font-size:13px; margin-bottom:8px;"></div>
+  <div id="chips" style="display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 10px;"></div>
+  <div id="lista"></div>
+  <p id="aviso" style="font-size:12px; color:var(--gris); margin-top:12px;"></p>
+</div>
+
+<!-- User dropdown menu -->
+<div id="user-menu" class="oculto" style="position:fixed; z-index:2000; top:66px; right:10px; background:var(--fondo); border:1px solid var(--borde); border-radius:12px; box-shadow:0 4px 16px #0004; padding:8px; min-width:220px; display:none;">
+  <div id="user-info" style="padding:8px 12px; border-bottom:1px solid var(--borde); margin-bottom:8px;">
+    <div style="font-weight:600; color:var(--texto);" id="user-name"></div>
+    <div style="font-size:12px; color:var(--gris);" id="user-email"></div>
+  </div>
+  <button id="menu-cambiar-modo" style="width:100%; display:flex; align-items:center; gap:10px; padding:12px; background:none; border:0; border-radius:10px; font-size:14px; color:var(--texto); cursor:pointer; text-align:left;">🔄 <span id="menu-modo-text">Cambiar a modo dinámico</span></button>
+  <button id="menu-cerrar-sesion" style="width:100%; display:flex; align-items:center; gap:10px; padding:12px; background:none; border:0; border-radius:10px; font-size:14px; color:var(--azul); cursor:pointer; text-align:left;">🚪 Cerrar sesión</button>
+</div>
+
+<div id="perfil" class="oculto" style="position:absolute; z-index:1000; top:10px; right:10px; background:var(--fondo); border:1px solid var(--borde); border-radius:12px; padding:6px 12px; font-size:12px; box-shadow:0 2px 8px #0003; text-align:right; color:var(--gris);"></div>
+<div id="auth-controls" style="position:absolute; z-index:1000; top:10px; right:10px; display:flex; gap:8px; align-items:center;"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBlcA2zXuqVpQRnwso0aZ83HjRxj1KWo_k",
+  authDomain: "guaguas-ftv1.firebaseapp.com",
+  projectId: "guaguas-ftv1",
+  storageBucket: "guaguas-ftv1.firebasestorage.app",
+  messagingSenderId: "492276628357",
+  appId: "1:492276628357:web:1c35bd297d7c68f40c62ec",
+  measurementId: "G-29X3LWCFY5"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
+const messaging = getMessaging(app);
+
+const VAPID_KEY = "BNApzvqctw8OIzaUdQbvfUerCqgZRJxPJ3jgkrmOd_txqwb8jWbn4zLDrBLLr-emzqHVkIGoV2Uh9coLAxsCffo";
+
+window.firebaseAuth = auth;
+window.firebaseProvider = provider;
+window.firebaseMessaging = messaging;
+window.firebaseSignIn = () => signInWithPopup(auth, provider);
+window.firebaseSignInRedirect = () => signInWithRedirect(auth, provider);
+window.firebaseGetRedirectResult = () => getRedirectResult(auth);
+window.firebaseSignOut = () => signOut(auth);
+window.VAPID_KEY = VAPID_KEY;
+</script>
+<script src="/cliente.js"></script>
+<script>
   <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off"><button id="gps" title="Paradas cerca de mí">📍</button></div>
   <div id="sug" class="oculto"></div>
 </div>
@@ -349,96 +438,229 @@ $('gps').onclick = () => {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
-const authControls = $('auth-controls');
-function renderAuthUI(user) {
+// ── Onboarding / Mode selection ──
+const onboarding = $('onboarding');
+const btnEstatico = $('btn-estatico');
+const btnDinamico = $('btn-dinamico');
+const topbar = $('topbar');
+const modoBadge = $('modo-badge');
+const modoText = $('modo-text');
+const modoIcon = $('modo-icon');
+const btnPerfil = $('btn-perfil');
+const userMenu = $('user-menu');
+const userInfo = $('user-info');
+const userName = $('user-name');
+const userEmail = $('user-email');
+const menuCambiarModo = $('menu-cambiar-modo');
+const menuModoText = $('menu-modo-text');
+const menuCerrarSesion = $('menu-cerrar-sesion');
+
+function actualizarModoUI(dinamico, user) {
+  const esDinamico = Boolean(dinamico);
+  // Badge en topbar
+  modoText.textContent = esDinamico ? 'Modo dinámico' : 'Modo estático';
+  modoIcon.textContent = esDinamico ? '⚡' : '🚌';
+  modoBadge.style.borderColor = esDinamico ? 'var(--verde)' : 'var(--borde)';
+  modoText.style.color = esDinamico ? 'var(--verde)' : 'var(--texto)';
+  // Menú usuario
   if (user) {
-    authControls.innerHTML = `
-      <span style="font-size:12px; color:var(--gris);">👤 ${user.displayName || user.email}</span>
-      <button onclick="Guaguas.signOut()" style="padding:4px 10px; border:1px solid var(--borde); background:var(--fondo); border-radius:8px; font-size:11px; cursor:pointer;">Salir</button>
-    `;
+    btnPerfil.classList.remove('oculto');
+    userName.textContent = user.displayName || user.email;
+    userEmail.textContent = user.email;
+    menuModoText.textContent = esDinamico ? 'Cambiar a modo estático' : 'Cambiar a modo dinámico';
   } else {
-    authControls.innerHTML = `
-      <button onclick="Guaguas.signIn()" style="padding:6px 12px; border:1px solid var(--borde); background:var(--fondo); border-radius:10px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
-        <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        Iniciar sesión con Google
-      </button>
-    `;
+    btnPerfil.classList.add('oculto');
+    userMenu.classList.add('oculto');
   }
 }
 
-if (window.firebaseAuth) {
-  import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js").then(({ onAuthStateChanged }) => {
-    onAuthStateChanged(window.firebaseAuth, (user) => renderAuthUI(user));
-  });
-} else {
-  renderAuthUI(null);
+function mostrarOnboarding() {
+  onboarding.classList.remove('oculto');
+  topbar.style.display = 'none';
+  $('barra').style.top = '10px';
+  $('panel').style.top = '66px';
 }
 
-// ── Modo dinámico / estático ──
-const modoToggle = $('modo-dinamico-toggle');
-const modoLabel = $('modo-label');
-const modoTooltip = $('modo-tooltip');
-
-function actualizarModoUI(dinamico) {
-  modoToggle.checked = dinamico;
-  if (dinamico) {
-    modoLabel.textContent = 'Modo dinámico';
-    modoTooltip.textContent = 'Tiempo real + comunidad';
-    modoLabel.style.color = 'var(--verde)';
-    modoTooltip.style.color = 'var(--verde)';
-  } else {
-    modoLabel.textContent = 'Modo estático';
-    modoTooltip.textContent = 'Solo horarios oficiales';
-    modoLabel.style.color = 'var(--gris)';
-    modoTooltip.style.color = 'var(--gris)';
-  }
+function ocultarOnboarding() {
+  onboarding.classList.add('oculto');
+  topbar.style.display = 'flex';
+  $('barra').style.top = '66px';
 }
 
-async function cambiarModo(dinamico) {
-  if (dinamico) {
-    // Requiere sesión de Google
-    const auth = window.firebaseAuth;
-    if (!auth) {
-      alert('Firebase Auth no disponible');
-      return false;
+async function loginGoogle() {
+  try {
+    // Primero intenta popup (funciona en desktop)
+    await window.firebaseSignIn();
+  } catch (e) {
+    // En móvil popup puede bloquearse → fallback a redirect
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || /mobile|android|iphone/i.test(navigator.userAgent)) {
+      await window.firebaseSignInRedirect();
+      // redirect recarga la página, getRedirectResult manejará el resultado
+    } else {
+      throw e;
     }
+  }
+}
+
+async function handleRedirectResult() {
+  try {
+    const result = await window.firebaseGetRedirectResult();
+    if (result && result.user) {
+      // Login exitoso vía redirect
+      const idToken = await result.user.getIdToken();
+      await exchangeFirebaseToken(idToken);
+      // Si venía de onboarding dinámico, continuar
+      if (sessionStorage.getItem('pendingDinamico')) {
+        sessionStorage.removeItem('pendingDinamico');
+        Guaguas.setModoDinamico(true);
+        actualizarModoUI(true, result.user);
+        ocultarOnboarding();
+      }
+    }
+  } catch (e) {
+    console.warn('Redirect result error:', e.message);
+  }
+}
+
+async function exchangeFirebaseToken(idToken) {
+  const resp = await fetch("/api/firebase-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id_token: idToken })
+  });
+  const data = await resp.json();
+  if (data.ok && data.token) {
+    Guaguas.setInternalToken(data.token);
+    return true;
+  }
+  return false;
+}
+
+async function seleccionarModo(dinamico) {
+  if (dinamico) {
+    const auth = window.firebaseAuth;
+    if (!auth) { alert('Firebase Auth no disponible'); return false; }
+    
     const { getAuth, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
     const currentUser = getAuth().currentUser;
+    
     if (!currentUser) {
-      // Pedir login
-      const confirmado = confirm('El modo dinámico requiere iniciar sesión con Google. ¿Quieres hacerlo ahora?');
-      if (!confirmado) return false;
-      try {
-        await window.firebaseSignIn();
-        // Esperar a que se complete el login
+      // Guardar intención para después del redirect
+      sessionStorage.setItem('pendingDinamico', 'true');
+      await loginGoogle();
+      // Si fue popup, esperar usuario
+      if (currentUser === null) {
         await new Promise(res => {
           const unsub = onAuthStateChanged(auth, (user) => {
             if (user) { unsub(); res(); }
           });
         });
-      } catch (e) {
-        alert('Error al iniciar sesión: ' + e.message);
-        return false;
       }
+      // Si fue redirect, la página se recarga y handleRedirectResult continua
     }
   }
   Guaguas.setModoDinamico(dinamico);
-  actualizarModoUI(dinamico);
-  // Recargar panel si hay parada seleccionada
-  if (actual) cargar();
   return true;
 }
 
-modoToggle.addEventListener('change', async (e) => {
-  const ok = await cambiarModo(e.target.checked);
-  if (!ok) {
-    modoToggle.checked = !e.target.checked; // revertir
+btnEstatico.onclick = async () => {
+  await seleccionarModo(false);
+  actualizarModoUI(false, null);
+  ocultarOnboarding();
+};
+
+btnDinamico.onclick = async () => {
+  const ok = await seleccionarModo(true);
+  if (ok) {
+    const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const user = getAuth().currentUser;
+    actualizarModoUI(true, user);
+    ocultarOnboarding();
+  }
+};
+
+// Topbar mode badge click → open user menu
+modoBadge.onclick = () => {
+  userMenu.classList.toggle('oculto');
+};
+
+btnPerfil.onclick = (e) => {
+  e.stopPropagation();
+  userMenu.classList.toggle('oculto');
+};
+
+menuCambiarModo.onclick = async () => {
+  const nuevoModo = !Guaguas.getModoDinamico();
+  if (nuevoModo) {
+    const ok = await seleccionarModo(true);
+    if (ok) {
+      const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+      const user = getAuth().currentUser;
+      actualizarModoUI(true, user);
+    }
+  } else {
+    Guaguas.setModoDinamico(false);
+    const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const user = getAuth().currentUser;
+    actualizarModoUI(false, user);
+  }
+  userMenu.classList.add('oculto');
+};
+
+menuCerrarSesion.onclick = async () => {
+  await window.firebaseSignOut();
+  Guaguas.setModoDinamico(false);
+  actualizarModoUI(false, null);
+  userMenu.classList.add('oculto');
+  if (actual) cargar();
+};
+
+// Cerrar menú al click fuera
+document.addEventListener('click', (e) => {
+  if (!userMenu.contains(e.target) && !btnPerfil.contains(e.target) && !modoBadge.contains(e.target)) {
+    userMenu.classList.add('oculto');
   }
 });
 
-Guaguas.onModoChange(actualizarModoUI);
-// Inicializar UI
-actualizarModoUI(Guaguas.getModoDinamico());
+// Auth state listener
+if (window.firebaseAuth) {
+  import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js").then(({ onAuthStateChanged }) => {
+    onAuthStateChanged(window.firebaseAuth, async (user) => {
+      if (user) {
+        const idToken = await user.getIdToken();
+        await exchangeFirebaseToken(idToken);
+        actualizarModoUI(Guaguas.getModoDinamico(), user);
+      } else {
+        actualizarModoUI(Guaguas.getModoDinamico(), null);
+      }
+      // Si hay onboarding visible y usuario logueado, puede continuar
+      if (user && sessionStorage.getItem('pendingDinamico')) {
+        sessionStorage.removeItem('pendingDinamico');
+        Guaguas.setModoDinamico(true);
+        actualizarModoUI(true, user);
+        ocultarOnboarding();
+      }
+    });
+  });
+}
+
+// Manejar redirect result al cargar
+handleRedirectResult();
+
+// Inicializar: mostrar onboarding si no hay modo guardado
+const modoGuardado = localStorage.getItem('modoDinamico');
+if (modoGuardado === null) {
+  mostrarOnboarding();
+} else {
+  ocultarOnboarding();
+  actualizarModoUI(modoGuardado === 'true', null);
+}
+
+Guaguas.onModoChange((dinamico) => {
+  const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+  const user = getAuth().currentUser;
+  actualizarModoUI(dinamico, user);
+});
 
 Guaguas.onPerfil(p => {
   const el = $('perfil');
