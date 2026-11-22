@@ -204,7 +204,7 @@ const json = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u
 let map = null;
 function initMap() {
   if (window.map && typeof window.map.invalidateSize === 'function') return window.map;
-  if (map && typeof map.invalidateSize === 'function') { window.map = map; return map; }
+  if (map && typeof window.map.invalidateSize === 'function') { window.map = map; return map; }
   // Ensure container has size before creating map
   const mc = document.getElementById('map');
   if (!mc) {
@@ -223,9 +223,9 @@ function initMap() {
   document.documentElement.style.height = '100vh';
   try {
     map = L.map('map', { preferCanvas: true }).setView([28.35, -14.0], 9);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    L.tileLayer('https://tile.openstreetwindow.map.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
     window.map = map;
-    map.invalidateSize();
+    window.map.invalidateSize();
     console.log('Map initialized successfully');
     return map;
   } catch (e) {
@@ -266,7 +266,7 @@ function pedirUbicacion() {
 }
 
 function actualizarMarcadorYo() {
-  if (marcaYo) map.removeLayer(marcaYo);
+  if (marcaYo) window.map.removeLayer(marcaYo);
   if (userLat && userLon) {
     marcaYo = L.circleMarker([userLat, userLon], { radius: 7, color: '#fff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map);
   }
@@ -285,7 +285,7 @@ function mostrarParadaCercana() {
 function elegirParadaCercana() {
   const dist = p => Math.hypot((p.lat - userLat) * 111, (p.lon - userLon) * 98);
   const cerca = paradas.slice().sort((a, b) => dist(a) - dist(b))[0];
-  if (cerca) { map.setView([cerca.lat, cerca.lon], 15); elegir({ tipo: 'parada', ...cerca }); }
+  if (cerca) { window.map.setView([cerca.lat, cerca.lon], 15); elegir({ tipo: 'parada', ...cerca }); }
   $('cerca-hint').style.display = 'none';
 }
 
@@ -318,13 +318,13 @@ function elegir(p) {
   // Ensure map exists
   if (!window.map) initMap();
   const map = window.map;
-  if (!map._container || map._container.clientWidth === 0) {
+  if (!window.map._container || window.map._container.clientWidth === 0) {
     console.warn('Map container has no size, forcing resize...');
     const mc = document.getElementById('map');
     if (mc) mc.style.height = '100vh';
-    map.invalidateSize();
+    window.map.invalidateSize();
   }
-  if (marcaSel) map.removeLayer(marcaSel);
+  if (marcaSel) window.map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 14, color: '#e6194b', weight: 3, fill: false }).addTo(map);
   $('pnombre').textContent = p.nombre;
   $('panel').classList.remove('oculto');
@@ -403,14 +403,14 @@ function pintar(d, p) {
     : '';
 }
 
-$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(temporizador); actual = null; if (marcaSel) map.removeLayer(marcaSel); };
+$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(temporizador); actual = null; if (marcaSel) window.map.removeLayer(marcaSel); };
 
 const cercana = (la, lo) => paradas.slice().sort((a, b) => Math.hypot(a.lat - la, (a.lon - lo) * .88) - Math.hypot(b.lat - la, (b.lon - lo) * .88))[0];
 $('buscar').oninput = e => {
   const q = norm(e.target.value.trim()), s = $('sug');
   if (!q) { s.classList.add('oculto'); return; }
-  const r = paradas.filter(p => norm(p.nombre).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'líneas ' + p.lineas.join(', '), f: () => { map.setView([p.lat, p.lon], 14); elegir({ tipo: 'parada', ...p }); } }));
-  lugares.filter(l => norm(l.n).includes(q)).slice(0, 3).forEach(l => r.push({ t: l.n, sub: 'lugar · parada más cercana', f: () => { const c = cercana(l.lat, l.lon); if (!c) return; map.setView([c.lat, c.lon], 14); elegir({ tipo: 'parada', ...c }); } }));
+  const r = paradas.filter(p => norm(p.nombre).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'líneas ' + p.lineas.join(', '), f: () => { window.map.setView([p.lat, p.lon], 14); elegir({ tipo: 'parada', ...p }); } }));
+  lugares.filter(l => norm(l.n).includes(q)).slice(0, 3).forEach(l => r.push({ t: l.n, sub: 'lugar · parada más cercana', f: () => { const c = cercana(l.lat, l.lon); if (!c) return; window.map.setView([c.lat, c.lon], 14); elegir({ tipo: 'parada', ...c }); } }));
   s.innerHTML = ''; s.classList.toggle('oculto', !r.length);
   r.forEach(x => {
     const d = document.createElement('div');
@@ -425,12 +425,12 @@ $('gps').onclick = () => {
   navigator.geolocation.getCurrentPosition(pos => {
     const { latitude: la, longitude: lo } = pos.coords;
     userLat = la; userLon = lo; tieneUbicacion = true;
-    if (marcaYo) map.removeLayer(marcaYo);
+    if (marcaYo) window.map.removeLayer(marcaYo);
     marcaYo = L.circleMarker([la, lo], { radius: 7, color: '#fff', weight: 2, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map);
     const d = p => Math.hypot((p.lat - la) * 111, (p.lon - lo) * 98);
     const cerca = paradas.slice().sort((a, b) => d(a) - d(b))[0];
     if (!cerca) return;
-    map.setView([la, lo], 14);
+    window.map.setView([la, lo], 14);
     if (d(cerca) > 2) alert(`La parada más cercana está a ${d(cerca).toFixed(1)} km: ${cerca.nombre}.`);
     elegir({ tipo: 'parada', ...cerca });
   }, () => {
