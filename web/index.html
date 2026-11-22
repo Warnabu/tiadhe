@@ -206,6 +206,7 @@ function initMap() {
   if (map) return map;
   map = L.map('map', { preferCanvas: true }).setView([28.35, -14.0], 9);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  window.map = map;  // Ensure window.map is set for invalidateSize calls
   return map;
 }
 
