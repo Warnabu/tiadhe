@@ -454,7 +454,7 @@ async function loginGoogle() {
     await window.firebaseSignIn();
   } catch (e) {
     // En móvil popup puede bloquearse → fallback a redirect
-    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || /mobile|android|iphone/i.test(navigator.userAgent)) {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/network-request-failed' || /mobile|android|iphone/i.test(navigator.userAgent)) {
       await window.firebaseSignInRedirect();
       // redirect recarga la página, getRedirectResult manejará el resultado
     } else {
@@ -528,16 +528,19 @@ btnEstatico.onclick = async () => {
 };
 
 btnDinamico.onclick = async () => {
-  const ok = await seleccionarModo(true);
-  if (ok) {
-    // For popup case, user is now logged in; for redirect, page reloads and handleRedirectResult handles it
-    const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
-    const user = getAuth().currentUser;
-    if (user) {
-      actualizarModoUI(true, user);
-      ocultarOnboarding();
+  try {
+    const ok = await seleccionarModo(true);
+    if (ok) {
+      const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+      const user = getAuth().currentUser;
+      if (user) {
+        actualizarModoUI(true, user);
+        ocultarOnboarding();
+      }
     }
-    // If no user (redirect case), handleRedirectResult will continue after reload
+  } catch (e) {
+    console.error('Error en modo dinamico:', e.code, e.message);
+    alert('No se pudo iniciar sesion: ' + (e.message || 'Error de red. Verifica tu conexion.'));
   }
 };
 
@@ -586,22 +589,33 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Auth state listener
-if (window.firebaseAuth) {
+// Auth state listener - wait for Firebase module to be ready
+function waitForFirebaseAuth(callback) {
+  if (window.firebaseAuth) {
+    callback(window.firebaseAuth);
+  } else {
+    setTimeout(() => waitForFirebaseAuth(callback), 50);
+  }
+}
+
+waitForFirebaseAuth((auth) => {
   import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js").then(({ onAuthStateChanged }) => {
-    onAuthStateChanged(window.firebaseAuth, async (user) => {
+    onAuthStateChanged(auth, async (user) => {
       if (user) {
-        const idToken = await user.getIdToken();
-        await exchangeFirebaseToken(idToken);
-        actualizarModoUI(Guaguas.getModoDinamico(), user);
+        try {
+          const idToken = await user.getIdToken();
+          await exchangeFirebaseToken(idToken);
+          actualizarModoUI(Guaguas.getModoDinamico(), user);
+        } catch (e) {
+          console.warn('Token exchange failed:', e.message);
+          actualizarModoUI(Guaguas.getModoDinamico(), user);
+        }
       } else {
         actualizarModoUI(Guaguas.getModoDinamico(), null);
       }
-      // Note: pendingDinamico handling is done in handleRedirectResult() after redirect
-      // and in btnDinamico.onclick after popup
     });
   });
-}
+});
 
 // Manejar redirect result al cargar (called from module script after DOMContentLoaded)
 
@@ -615,9 +629,17 @@ if (modoGuardado === null) {
 }
 
 Guaguas.onModoChange(async (dinamico) => {
-  const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
-  const user = getAuth().currentUser;
-  actualizarModoUI(dinamico, user);
+  // Defer to ensure Firebase module is loaded
+  setTimeout(async () => {
+    try {
+      const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+      const user = getAuth().currentUser;
+      actualizarModoUI(dinamico, user);
+    } catch (e) {
+      console.warn('onModoChange error:', e.message);
+      actualizarModoUI(dinamico, null);
+    }
+  }, 0);
 });
 
 Guaguas.onPerfil(p => {
