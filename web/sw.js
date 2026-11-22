@@ -33,6 +33,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (!url.protocol.startsWith('http')) return;
+  if (url.hostname.includes('googleapis.com') || url.hostname.includes('firebaseapp.com') || url.hostname.includes('gstatic.com')) return;
   
   // API calls - network first, fallback to cache
   if (url.pathname.startsWith('/api/')) {
