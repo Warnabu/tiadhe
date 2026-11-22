@@ -446,20 +446,31 @@ function ocultarOnboarding() {
   onboarding.classList.add('oculto');
   topbar.style.display = 'flex';
   $('barra').style.top = '66px';
+  // Leaflet needs invalidateSize when container becomes visible
+  setTimeout(() => { if (window.map) map.invalidateSize(); }, 50);
+  // Auto-select nearby parada if GPS available and no parada selected
+  if (!actual && userLat && userLon && paradas.length) {
+    const dist = p => Math.hypot((p.lat - userLat) * 111, (p.lon - userLon) * 98);
+    const cerca = paradas.slice().sort((a, b) => dist(a) - dist(b))[0];
+    if (cerca && dist(cerca) < 2) elegir({ tipo: 'parada', ...cerca });
+  }
 }
 
 async function loginGoogle() {
+  // En móvil/PWA va directo a redirect (popup suele bloquearse)
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || matchMedia('(display-mode: standalone)').matches) {
+    await window.firebaseSignInRedirect();
+    return 'redirect';
+  }
   try {
-    // Primero intenta popup (funciona en desktop)
     await window.firebaseSignIn();
+    return 'popup';
   } catch (e) {
-    // En móvil popup puede bloquearse → fallback a redirect
-    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/network-request-failed' || /mobile|android|iphone/i.test(navigator.userAgent)) {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
       await window.firebaseSignInRedirect();
-      // redirect recarga la página, getRedirectResult manejará el resultado
-    } else {
-      throw e;
+      return 'redirect';
     }
+    throw e;
   }
 }
 
@@ -467,19 +478,19 @@ async function handleRedirectResult() {
   try {
     const result = await window.firebaseGetRedirectResult();
     if (result && result.user) {
-      // Login exitoso vía redirect
       const idToken = await result.user.getIdToken();
       await exchangeFirebaseToken(idToken);
-      // Si venía de onboarding dinámico, continuar
-      if (sessionStorage.getItem('pendingDinamico')) {
+      const pendiente = sessionStorage.getItem('pendingDinamico');
+      if (pendiente) {
         sessionStorage.removeItem('pendingDinamico');
         Guaguas.setModoDinamico(true);
         actualizarModoUI(true, result.user);
         ocultarOnboarding();
+        if (actual) cargar();
       }
     }
   } catch (e) {
-    console.warn('Redirect result error:', e.message);
+    console.warn('Redirect result error:', e.code, e.message);
   }
 }
 
@@ -502,7 +513,7 @@ async function seleccionarModo(dinamico) {
     const auth = window.firebaseAuth;
     if (!auth) { alert('Firebase Auth no disponible'); return false; }
     
-    const { getAuth, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
     
     // Check if user is already logged in
     if (getAuth().currentUser) {
@@ -510,11 +521,9 @@ async function seleccionarModo(dinamico) {
     } else {
       // Not logged in, need to authenticate
       sessionStorage.setItem('pendingDinamico', 'true');
-      await loginGoogle();
-      // loginGoogle() handles popup vs redirect:
-      // - popup: returns after user signs in
-      // - redirect: page reloads, handleRedirectResult() will continue
-      return true; // For redirect case, we return early (page will reload)
+      const via = await loginGoogle();
+      if (via === 'redirect') return 'redirect'; // page will reload
+      // popup case: loginGoogle returned, user is logged in
     }
   }
   Guaguas.setModoDinamico(dinamico);
@@ -529,18 +538,22 @@ btnEstatico.onclick = async () => {
 
 btnDinamico.onclick = async () => {
   try {
-    const ok = await seleccionarModo(true);
-    if (ok) {
+    const r = await seleccionarModo(true);
+    if (r === true) {
+      // Popup success: user logged in, mode set, onboarding hidden
       const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
       const user = getAuth().currentUser;
-      if (user) {
-        actualizarModoUI(true, user);
-        ocultarOnboarding();
-      }
+      actualizarModoUI(true, user);
+      ocultarOnboarding();
+      if (actual) cargar();
+    } else if (r === 'redirect') {
+      // Redirect flow: page will reload, handleRedirectResult will continue
+      console.log('Redirect initiated, waiting for reload...');
     }
   } catch (e) {
     console.error('Error en modo dinamico:', e.code, e.message);
-    alert('No se pudo iniciar sesion: ' + (e.message || 'Error de red. Verifica tu conexion.'));
+    const m = e.code === 'auth/network-request-failed' ? 'Error de red o clave API bloqueada. Usa modo estático.' : (e.message || 'Error de red');
+    alert('No se pudo iniciar sesión: ' + m);
   }
 };
 
@@ -605,13 +618,13 @@ waitForFirebaseAuth((auth) => {
         try {
           const idToken = await user.getIdToken();
           await exchangeFirebaseToken(idToken);
-          actualizarModoUI(Guaguas.getModoDinamico(), user);
         } catch (e) {
           console.warn('Token exchange failed:', e.message);
-          actualizarModoUI(Guaguas.getModoDinamico(), user);
         }
-      } else {
-        actualizarModoUI(Guaguas.getModoDinamico(), null);
+      }
+      // Only update UI if onboarding is NOT visible (user already chose a mode)
+      if (onboarding.classList.contains('oculto')) {
+        actualizarModoUI(Guaguas.getModoDinamico(), user);
       }
     });
   });
