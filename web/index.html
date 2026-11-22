@@ -218,7 +218,7 @@ function initMap() {
   mc.style.left = '0';
   mc.style.right = '0';
   mc.style.bottom = '0';
-  mc.style.zIndex = '0';
+  mc.style.zIndex = '1';
   document.body.style.height = '100vh';
   document.documentElement.style.height = '100vh';
   try {
@@ -317,11 +317,12 @@ function elegir(p) {
   actual = p; filtro = null; marcadas = new Set();
   // Ensure map exists
   if (!window.map) initMap();
-  if (!window.map._container || window.map._container.clientWidth === 0) {
+  const map = window.map;
+  if (!map._container || map._container.clientWidth === 0) {
     console.warn('Map container has no size, forcing resize...');
     const mc = document.getElementById('map');
     if (mc) mc.style.height = '100vh';
-    window.map.invalidateSize();
+    map.invalidateSize();
   }
   if (marcaSel) map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 14, color: '#e6194b', weight: 3, fill: false }).addTo(map);
@@ -499,7 +500,7 @@ function ocultarOnboarding() {
     mc.style.left = '0';
     mc.style.right = '0';
     mc.style.bottom = '0';
-    mc.style.zIndex = '0';
+    mc.style.zIndex = '1';
   }
   document.body.style.height = '100vh';
   document.documentElement.style.height = '100vh';
