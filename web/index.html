@@ -625,7 +625,7 @@ if (modoGuardado === null) {
   actualizarModoUI(modoGuardado === 'true', null);
 }
 
-Guaguas.onModoChange((dinamico) => {
+Guaguas.onModoChange(async (dinamico) => {
   const { getAuth } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
   const user = getAuth().currentUser;
   actualizarModoUI(dinamico, user);
