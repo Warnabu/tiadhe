@@ -190,7 +190,7 @@ window.firebaseSignOut = () => signOut(auth);
 window.VAPID_KEY = VAPID_KEY;
 </script>
 <script src="/cliente.js"></script>
-<script>
+
   <div id="fila"><input id="buscar" placeholder="Buscar parada…" autocomplete="off"><button id="gps" title="Paradas cerca de mí">📍</button></div>
   <div id="sug" class="oculto"></div>
 </div>
@@ -202,38 +202,7 @@ window.VAPID_KEY = VAPID_KEY;
   <div id="lista"></div>
   <p id="aviso"></p>
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBlcA2zXuqVpQRnwso0aZ83HjRxj1KWo_k",
-  authDomain: "guaguas-ftv1.firebaseapp.com",
-  projectId: "guaguas-ftv1",
-  storageBucket: "guaguas-ftv1.firebasestorage.app",
-  messagingSenderId: "492276628357",
-  appId: "1:492276628357:web:1c35bd297d7c68f40c62ec",
-  measurementId: "G-29X3LWCFY5"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const provider = new GoogleAuthProvider();
-const messaging = getMessaging(app);
-
-// TODO: Reemplaza con tu VAPID key de Firebase Console > Project Settings > Cloud Messaging > Web Push certificates
-const VAPID_KEY = "BNApzvqctw8OIzaUdQbvfUerCqgZRJxPJ3jgkrmOd_txqwb8jWbn4zLDrBLLr-emzqHVkIGoV2Uh9coLAxsCffo";
-
-window.firebaseAuth = auth;
-window.firebaseProvider = provider;
-window.firebaseMessaging = messaging;
-window.firebaseSignIn = () => signInWithPopup(auth, provider);
-window.firebaseSignOut = () => signOut(auth);
-window.VAPID_KEY = VAPID_KEY;
-</script>
-<script src="/cliente.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
