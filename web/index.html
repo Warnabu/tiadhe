@@ -203,27 +203,36 @@ const json = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u
 // Map will be initialized after onboarding is resolved
 let map = null;
 function initMap() {
-  if (map) return map;
+  if (window.map && typeof window.map.invalidateSize === 'function') return window.map;
+  if (map && typeof map.invalidateSize === 'function') { window.map = map; return map; }
   // Ensure container has size before creating map
   const mc = document.getElementById('map');
-  if (mc) {
-    mc.style.height = '100vh';
-    mc.style.width = '100vw';
-    mc.style.position = 'absolute';
-    mc.style.top = '0';
-    mc.style.left = '0';
-    mc.style.right = '0';
-    mc.style.bottom = '0';
-    mc.style.zIndex = '0';
+  if (!mc) {
+    console.error('initMap: #map element not found');
+    return null;
   }
+  mc.style.height = '100vh';
+  mc.style.width = '100vw';
+  mc.style.position = 'absolute';
+  mc.style.top = '0';
+  mc.style.left = '0';
+  mc.style.right = '0';
+  mc.style.bottom = '0';
+  mc.style.zIndex = '0';
   document.body.style.height = '100vh';
   document.documentElement.style.height = '100vh';
-  map = L.map('map', { preferCanvas: true }).setView([28.35, -14.0], 9);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
-  window.map = map;  // Ensure window.map is set for invalidateSize calls
-  // Force initial size calculation synchronously
-  map.invalidateSize();
-  return map;
+  try {
+    map = L.map('map', { preferCanvas: true }).setView([28.35, -14.0], 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    window.map = map;
+    map.invalidateSize();
+    console.log('Map initialized successfully');
+    return map;
+  } catch (e) {
+    console.error('initMap failed:', e);
+    window.map = null;
+    return null;
+  }
 }
 
 let paradas = [], lugares = [], colores = {}, calibradas = {}, actual = null, filtro = null, temporizador = null, marcaSel = null, marcaYo = null, marcadas = new Set();
@@ -480,7 +489,7 @@ function ocultarOnboarding() {
   onboarding.classList.add('oculto');
   topbar.style.display = 'flex';
   $('barra').style.top = '66px';
-  // Ensure map container has dimensions FIRST
+  // Ensure map container has dimensions
   const mc = document.getElementById('map');
   if (mc) {
     mc.style.height = '100vh';
@@ -494,14 +503,17 @@ function ocultarOnboarding() {
   }
   document.body.style.height = '100vh';
   document.documentElement.style.height = '100vh';
-  // Initialize map SYNCHRONOUSLY if not exists
-  if (!window.map) initMap();
-  // Now window.map should exist, call invalidateSize
-  if (window.map) {
+  // Initialize map if not exists or invalid
+  if (!window.map || typeof window.map.invalidateSize !== 'function') {
+    const m = initMap();
+    if (!m) {
+      console.error('Failed to initialize map');
+      return;
+    }
+  }
+  // Call invalidateSize directly if map exists
+  if (window.map && typeof window.map.invalidateSize === 'function') {
     window.map.invalidateSize();
-    setTimeout(() => window.map.invalidateSize(), 50);
-    setTimeout(() => window.map.invalidateSize(), 200);
-    setTimeout(() => window.map.invalidateSize(), 500);
   }
   // Auto-select nearby parada if GPS available and no parada selected
   if (!actual && userLat && userLon && paradas.length) {
