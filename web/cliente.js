@@ -150,7 +150,7 @@ const Guaguas = (() => {
     signOut: () => window.firebaseSignOut?.(),
     getModoDinamico: () => modoDinamico,
     setModoDinamico,
-    onModoChange: f => { cambioModo = f; Promise.resolve(f(modoDinamico)); },
+    onModoChange: f => { cambioModo = f; setTimeout(() => f(modoDinamico), 0); },
     setInternalToken,
   };
 })();
