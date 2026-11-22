@@ -39,8 +39,10 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(e.request).then(r => {
-        const clone = r.clone();
-        caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        if (e.request.method === 'GET') {
+          const clone = r.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        }
         return r;
       }).catch(() => caches.match(e.request))
     );
@@ -52,7 +54,7 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(r => {
-        if (r.ok) {
+        if (r.ok && e.request.method === 'GET') {
           const clone = r.clone();
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
