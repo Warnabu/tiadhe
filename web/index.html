@@ -223,7 +223,7 @@ function initMap() {
   document.documentElement.style.height = '100vh';
   try {
     map = L.map('map', { preferCanvas: true }).setView([28.35, -14.0], 9);
-    L.tileLayer('https://tile.openstreetwindow.map.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
     window.map = map;
     window.map.invalidateSize();
     console.log('Map initialized successfully');
