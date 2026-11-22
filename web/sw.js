@@ -32,6 +32,7 @@ self.addEventListener('activate', e => {
 // Fetch - network first for API, cache first for static
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+  if (!url.protocol.startsWith('http')) return;
   
   // API calls - network first, fallback to cache
   if (url.pathname.startsWith('/api/')) {

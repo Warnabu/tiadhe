@@ -613,8 +613,8 @@ if (window.firebaseAuth) {
   });
 }
 
-// Manejar redirect result al cargar
-handleRedirectResult();
+// Manejar redirect result al cargar (deferred: module script defines firebaseGetRedirectResult)
+setTimeout(handleRedirectResult, 0);
 
 // Inicializar: mostrar onboarding si no hay modo guardado
 const modoGuardado = localStorage.getItem('modoDinamico');
