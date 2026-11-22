@@ -188,6 +188,11 @@ window.firebaseSignInRedirect = () => signInWithRedirect(auth, provider);
 window.firebaseGetRedirectResult = () => getRedirectResult(auth);
 window.firebaseSignOut = () => signOut(auth);
 window.VAPID_KEY = VAPID_KEY;
+
+// Handle redirect result after DOM is ready (inline script defines handleRedirectResult)
+window.addEventListener("DOMContentLoaded", function() {
+  if (typeof handleRedirectResult === "function") handleRedirectResult();
+});
 </script>
 <script src="/cliente.js"></script>
 
@@ -613,8 +618,7 @@ if (window.firebaseAuth) {
   });
 }
 
-// Manejar redirect result al cargar (deferred: module script defines firebaseGetRedirectResult)
-setTimeout(handleRedirectResult, 0);
+// Manejar redirect result al cargar (called from module script after DOMContentLoaded)
 
 // Inicializar: mostrar onboarding si no hay modo guardado
 const modoGuardado = localStorage.getItem('modoDinamico');
