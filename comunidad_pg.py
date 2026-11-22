@@ -111,7 +111,7 @@ class Comunidad:
             if pg.execute_one("SELECT 1 FROM nonces WHERE n=%s", (nonce_key,)):
                 raise Error("petición repetida", 401)
             pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, int(ahora)))
-            pg.cleanup_old_nonces(ahora=ahora)
+            pg.cleanup_old_nonces(agora=ahora)
         return dev
 
     # ------------------------------------------------------------ reputación
