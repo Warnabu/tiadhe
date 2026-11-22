@@ -308,11 +308,11 @@ function elegir(p) {
   actual = p; filtro = null; marcadas = new Set();
   // Ensure map exists
   if (!window.map) initMap();
-  if (!map._container || map._container.clientWidth === 0) {
+  if (!window.map._container || window.map._container.clientWidth === 0) {
     console.warn('Map container has no size, forcing resize...');
     const mc = document.getElementById('map');
     if (mc) mc.style.height = '100vh';
-    setTimeout(() => map.invalidateSize(), 50);
+    window.map.invalidateSize();
   }
   if (marcaSel) map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 14, color: '#e6194b', weight: 3, fill: false }).addTo(map);
@@ -430,8 +430,8 @@ $('gps').onclick = () => {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 // Force map size on orientation change / resize
-window.addEventListener('resize', () => { if (window.map) setTimeout(() => map.invalidateSize(), 100); });
-window.addEventListener('orientationchange', () => { if (window.map) setTimeout(() => map.invalidateSize(), 300); });
+window.addEventListener('resize', () => { if (window.map) setTimeout(() => window.map.invalidateSize(), 100); });
+window.addEventListener('orientationchange', () => { if (window.map) setTimeout(() => window.map.invalidateSize(), 300); });
 
 // ── Onboarding / Mode selection ──
 const onboarding = $('onboarding');
