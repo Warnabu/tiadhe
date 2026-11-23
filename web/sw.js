@@ -1,100 +1,86 @@
-// Service Worker para Guaguas FTV - PWA con cache offline
-const CACHE_NAME = 'guaguas-ftv-v3';
-const STATIC_ASSETS = [
-  '/',
-  '/cliente.js',
-  '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-];
+// Service Worker de Guaguas FTV. Súbele la versión en cada despliegue que cambie assets.
+const VERSION = 'v4-2026-11-22';
+const CACHE = 'guaguas-ftv-' + VERSION;
+const ICONOS = ['/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
+const LEAFLET = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
+const SHELL = ['/', '/cliente.js'];   // network-first: siempre intentan la red para no quedarse con código viejo
 
-// Install - cache static assets
 self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
-  );
-  self.skipWaiting();
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    // addAll falla entero si UNA petición falla: se añaden de una en una y se toleran errores.
+    await Promise.all([...SHELL, ...ICONOS, ...LEAFLET].map(u => c.add(u).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 
-// Activate - clean old caches
 self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
-    ))
-  );
-  self.clients.claim();
+  e.waitUntil((async () => {
+    for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);   // borra TODAS las caches antiguas
+    await self.clients.claim();
+  })());
 });
 
-// Fetch - network first for API, cache first for static
+self.addEventListener('message', e => { if (e.data === 'SKIP_WAITING') self.skipWaiting(); });
+
+const redPrimero = async req => {
+  try {
+    const r = await fetch(req);
+    if (r.ok) (await caches.open(CACHE)).put(req, r.clone());
+    return r;
+  } catch (err) {
+    const c = await caches.match(req);
+    if (c) return c;
+    throw err;
+  }
+};
+const cachePrimero = async req => {
+  const c = await caches.match(req);
+  if (c) return c;
+  const r = await fetch(req);
+  if (r.ok) (await caches.open(CACHE)).put(req, r.clone());
+  return r;
+};
+
 self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
+  const req = e.request;
+  if (req.method !== 'GET') return;                       // nunca interceptar POST (subidas, registro, tokens)
+  const url = new URL(req.url);
   if (!url.protocol.startsWith('http')) return;
-  if (url.hostname.includes('googleapis.com') || url.hostname.includes('firebaseapp.com') || url.hostname.includes('gstatic.com')) return;
-  
-  // API calls - network first, fallback to cache
-  if (url.pathname.startsWith('/api/')) {
-    e.respondWith(
-      fetch(e.request).then(r => {
-        if (e.request.method === 'GET') {
-          const clone = r.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-        }
-        return r;
-      }).catch(() => caches.match(e.request))
-    );
+  if (url.origin !== location.origin) {                   // solo Leaflet de unpkg; Google/Firebase/gstatic/OSM pasan directos
+    if (url.hostname === 'unpkg.com') e.respondWith(cachePrimero(req));
     return;
   }
-  
-  // Static assets - cache first
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(r => {
-        if (r.ok && e.request.method === 'GET') {
-          const clone = r.clone();
-          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-        }
-        return r;
-      });
-    })
-  );
+  if (url.pathname.startsWith('/__/')) return;            // proxy de Firebase Auth: jamás cachear
+  if (url.pathname === '/health') return;
+  if (url.pathname.startsWith('/api/')) {                 // datos: red primero, caché solo como respaldo offline
+    e.respondWith(redPrimero(req));
+    return;
+  }
+  if (req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.js') || url.pathname.endsWith('.html')) {
+    e.respondWith(redPrimero(req));
+    return;
+  }
+  e.respondWith(cachePrimero(req));                       // iconos, manifest…
 });
 
-// Push notifications from FCM
+// Notificaciones push (FCM). No usamos firebase-messaging-sw.js: este es el único SW del scope "/".
 self.addEventListener('push', e => {
-  if (!e.data) return;
-  const data = e.data.json();
-  const options = {
-    body: data.notification?.body || data.data?.body || 'Nueva notificación',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
-    data: data.data || {},
-    actions: [
-      { action: 'open', title: 'Abrir' },
-      { action: 'close', title: 'Cerrar' }
-    ]
-  };
-  e.waitUntil(self.registration.showNotification(data.notification?.title || 'Guaguas FTV', options));
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (_) { data = { notification: { body: e.data && e.data.text() } }; }
+  const n = data.notification || {};
+  const d = data.data || {};
+  e.waitUntil(self.registration.showNotification(n.title || d.title || 'Guaguas FTV', {
+    body: n.body || d.body || 'Nueva notificación',
+    icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', data: d,
+  }));
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  if (e.action === 'open' || !e.action) {
-    e.waitUntil(clients.openWindow('/'));
-  }
+  e.waitUntil((async () => {
+    const lista = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of lista) if ('focus' in c) return c.focus();
+    return clients.openWindow('/');
+  })());
 });
-
-// Background sync for offline "me he subido" (future enhancement)
-self.addEventListener('sync', e => {
-  if (e.tag === 'subida-offline') {
-    e.waitUntil(syncSubidas());
-  }
-});
-
-async function syncSubidas() {
-  // Implementation for when user taps "me he subido" offline
-  // Would read from IndexedDB and send when online
-}

@@ -5,7 +5,7 @@
 En producción:  gunicorn -w 2 servidor:app   (detrás de nginx con HTTPS)
 Pruebas: GUAGUAS_DEBUG=1 permite ?hora=2026-09-24T10:05 en las consultas.
 """
-import base64, hashlib, json, os, time, jwt
+import base64, hashlib, json, logging, math, os, time, jwt
 from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -36,7 +36,11 @@ OSM = [p for p in json.loads(_osm.read_text(encoding="utf-8")) if p["nombre"]] i
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 COLOR = {num: g.COLORES[i % len(g.COLORES)] for i, num in enumerate(BASE)}
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-in-production")
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    if os.environ.get("RENDER"):
+        raise SystemExit("Falta la variable de entorno JWT_SECRET (genera una con: python -c \"import secrets;print(secrets.token_hex(32))\")")
+    JWT_SECRET = "solo-desarrollo-local"  # nunca en producción
 JWT_ALG = "HS256"
 JWT_EXP_HOURS = 24
 
@@ -53,8 +57,7 @@ def init_firebase():
         _firebase_app = firebase_admin.initialize_app(cred)
         return True
     except Exception as e:
-        if DEBUG:
-            print(f"Firebase init failed: {e}")
+        logging.getLogger("guaguas").error("Firebase init failed (FIREBASE_CRED_PATH=%s): %s", FIREBASE_CRED_PATH, e)
         return False
 
 def create_internal_token(uid: str, email: str = None, display_name: str = None) -> str:
@@ -75,23 +78,22 @@ def verify_internal_token(token: str) -> dict:
     except jwt.InvalidTokenError:
         raise Error("token inválido", 401)
 
-def send_fcm_push(token: str, title: str, body: str, data: dict = None) -> bool:
+def send_fcm_push(token: str, title: str, body: str, data: dict = None):
+    """Devuelve (ok, motivo). motivo='token_invalido' si FCM dice que el token ya no existe."""
     if not FIREBASE_AVAILABLE:
-        return False
+        return False, "firebase_no_instalado"
     if not init_firebase():
-        return False
+        return False, "firebase_no_configurado"
     try:
-        message = messaging.Message(
-            notification=messaging.Notification(title=title, body=body),
-            data=data or {},
-            token=token,
-        )
-        messaging.send(message)
-        return True
+        messaging.send(messaging.Message(notification=messaging.Notification(title=title, body=body),
+                                         data=data or {}, token=token))
+        return True, None
+    except (messaging.UnregisteredError, messaging.SenderIdMismatchError):
+        return False, "token_invalido"
     except Exception as e:
-        if DEBUG:
-            print(f"FCM send failed: {e}")
-        return False
+        app.logger.warning("FCM send failed: %s", e)
+        return False, "fallo_fcm"
+
 
 def agrupar(radio_km=0.06, BASE=None):
     """Une las paradas (de cualquier línea) a menos de ~60 m: una parada física con sus dos sentidos
@@ -131,9 +133,22 @@ def agrupar(radio_km=0.06, BASE=None):
 
 
 PARADAS = agrupar()
-if os.environ.get("GUAGUAS_PROXY"):  # detrás de nginx: usa la IP real para limitar registros
+_HOPS = int(os.environ.get("GUAGUAS_PROXY_HOPS", os.environ.get("GUAGUAS_PROXY", "0")) or 0)
+if _HOPS:  # proxy propio (nginx...): X-Forwarded-For con N saltos de confianza
     from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_HOPS)
+# Render va detrás de Cloudflare, que fija CF-Connecting-IP.
+TRUST_CF = bool(os.environ.get("TRUST_CF_CONNECTING_IP") or os.environ.get("RENDER"))
+
+
+def client_ip():
+    """IP real del cliente. Sin esto todos los usuarios comparten la IP del proxy de Render."""
+    ip = (request.headers.get("CF-Connecting-IP") or "").strip() if TRUST_CF else ""
+    ip = ip or request.remote_addr or "?"
+    if os.environ.get("GUAGUAS_LOG_IP"):  # diagnóstico temporal: ver qué cabeceras llegan de verdad
+        app.logger.warning("client_ip=%s remote_addr=%s CF=%s XFF=%s", ip, request.remote_addr,
+                           request.headers.get("CF-Connecting-IP"), request.headers.get("X-Forwarded-For"))
+    return ip
 
 
 def ahora_ts():
@@ -157,13 +172,25 @@ COM = Comunidad(
 
 @app.errorhandler(Error)
 def error_comunidad(e):
-    return jsonify(ok=False, error=str(e)), e.codigo
+    resp = jsonify(ok=False, error=str(e))
+    if e.codigo == 429:
+        resp.headers["Retry-After"] = "3600"
+    return resp, e.codigo
 
 
 @app.errorhandler(500)
 def error_500(e):
-    import traceback
-    return jsonify(ok=False, error="Internal server error", traceback=traceback.format_exc()), 500
+    app.logger.exception("Error 500 en %s %s", request.method, request.path)  # detalle al log, no al cliente
+    return jsonify(ok=False, error="Error interno del servidor"), 500
+
+
+@app.before_request
+def _mantenimiento():
+    if request.path.startswith("/api/") and request.method != "GET":
+        try:
+            COM.mantenimiento(ahora_ts())
+        except Exception:
+            app.logger.exception("mantenimiento fallido")
 
 
 def autenticar():
@@ -229,7 +256,7 @@ def api_registro():
         raise Error("faltan cabeceras de autenticación", 401)
     ahora = ahora_ts()
     COM.verificar(dev, ts, nonce, firma, mensaje("POST", request.path, ts, nonce, request.get_data(as_text=True)), ahora, pub_raw=raw)
-    COM.registrar(pub, request.remote_addr or "?", ahora)
+    COM.registrar(pub, client_ip(), ahora)
     return jsonify(ok=True, dispositivo=dev, perfil=COM.perfil(dev, ahora))
 
 
@@ -298,12 +325,17 @@ def api_osm():
     return jsonify([dict(n=p["nombre"], lat=p["lat"], lon=p["lon"]) for p in OSM])
 
 
+def _modo():
+    m = request.args.get("modo", "dinamico")
+    return m if m in ("dinamico", "estatico") else "dinamico"
+
+
 @app.get("/api/parada/<pid>")
 def api_parada(pid):
     gr = PARADAS.get(pid)
     if not gr:
         raise Error("parada desconocida", 404)
-    modo = request.args.get("modo", "dinamico")
+    modo = _modo()
     d = dict(tablero(pid, dict(nombre=gr["nombre"], ids=gr["ids"]), ahora_local(), modo=modo))
     d["parada"] = dict(id=pid, nombre=gr["nombre"], lineas=sorted(gr["lineas"]))
     return jsonify(d)
@@ -311,6 +343,8 @@ def api_parada(pid):
 
 @app.get("/api/debug/pool")
 def api_debug_pool():
+    if not DEBUG:
+        raise Error("no encontrado", 404)
     import postgresql_db as pg
     return jsonify(
         use_postgres=pg.USE_POSTGRES,
@@ -324,6 +358,8 @@ def api_debug_pool():
 
 @app.get("/api/debug/version")
 def api_debug_version():
+    if not DEBUG:
+        raise Error("no encontrado", 404)
     import subprocess, os
     try:
         # Use current working directory or __file__ location
@@ -342,8 +378,10 @@ def api_cerca():
         lat, lon = float(request.args["lat"]), float(request.args["lon"])
     except ValueError:
         raise Error("lat/lon no son números", 400)
+    if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+        raise Error("lat/lon fuera de rango", 400)
     nombre = request.args.get("nombre", "Parada")[:80]
-    modo = request.args.get("modo", "dinamico")
+    modo = _modo()
     d = dict(tablero(("osm", round(lat, 5), round(lon, 5)), dict(nombre=nombre, lat=lat, lon=lon), ahora_local(), modo=modo))
     d["parada"] = dict(id="osm", nombre=nombre, lineas=[], aprox=True)
     return jsonify(d)
@@ -362,7 +400,8 @@ def api_firebase_token():
     try:
         decoded = firebase_auth.verify_id_token(id_token)
     except Exception as e:
-        raise Error(f"token inválido: {e}", 401)
+        app.logger.info("firebase id_token rechazado: %s", e)
+        raise Error("token de Firebase no válido", 401)
     uid = decoded.get("uid")
     email = decoded.get("email")
     name = decoded.get("name")
@@ -378,10 +417,9 @@ def api_register_fcm_token():
     fcm_token = d.get("fcm_token")
     if not fcm_token:
         raise Error("falta fcm_token", 400)
-    try:
-        COM.guardar_fcm_token(dev, fcm_token)
-    except Exception:
-        pass
+    if not isinstance(fcm_token, str) or not (20 <= len(fcm_token) <= 4096):
+        raise Error("fcm_token no válido", 400)
+    COM.guardar_fcm_token(dev, fcm_token)
     return jsonify(ok=True)
 
 
@@ -392,8 +430,35 @@ def api_test_push():
     fcm_token = COM.obtener_fcm_token(dev)
     if not fcm_token:
         raise Error("no hay token FCM registrado", 400)
-    ok = send_fcm_push(fcm_token, "Guaguas FTV", "Notificación de prueba desde el backend")
-    return jsonify(ok=ok)
+    ok, motivo = send_fcm_push(fcm_token, "Guaguas FTV", "Notificación de prueba desde el backend")
+    if motivo == "token_invalido":
+        COM.borrar_fcm_token(dev)
+    return jsonify(ok=ok, motivo=motivo), (200 if ok else 502)
+
+
+# ── Proxy de Firebase Auth (/__/auth/*): permite usar authDomain = este dominio ──
+# Requiere añadir https://<tu-dominio>/__/auth/handler como URI de redirección autorizada en el cliente OAuth de Google.
+FIREBASE_AUTH_HOST = os.environ.get("FIREBASE_AUTH_HOST", "guaguas-ftv1.firebaseapp.com")
+
+
+@app.route("/__/auth/<path:resto>", methods=["GET", "POST"])
+@app.route("/__/firebase/<path:resto>", methods=["GET"])
+def proxy_firebase_auth(resto):
+    import requests as rq
+    from flask import Response
+    destino = f"https://{FIREBASE_AUTH_HOST}{request.path}"
+    try:
+        r = rq.request(request.method, destino, params=request.args, data=request.get_data() or None,
+                       headers={"Content-Type": request.headers.get("Content-Type", ""),
+                                "Accept-Language": request.headers.get("Accept-Language", "")},
+                       timeout=10, allow_redirects=False)
+    except rq.RequestException as e:
+        app.logger.warning("proxy firebase auth falló: %s", e)
+        return jsonify(ok=False, error="no se pudo contactar con Firebase Auth"), 502
+    permitidas = ("Content-Type", "Location", "Content-Language")
+    resp = Response(r.content, status=r.status_code, headers={k: v for k, v in r.headers.items() if k in permitidas})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/health")

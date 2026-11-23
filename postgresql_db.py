@@ -18,13 +18,17 @@ except ImportError:
     PSYCOPG2_AVAILABLE = False
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-USE_POSTGRES = DATABASE_URL and PSYCOPG2_AVAILABLE
+USE_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 
 if USE_POSTGRES:
     try:
-        POOL = ThreadedConnectionPool(1, 5, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
+        POOL = ThreadedConnectionPool(1, 5, dsn=DATABASE_URL, cursor_factory=RealDictCursor,
+                                      connect_timeout=10, keepalives=1, keepalives_idle=30,
+                                      keepalives_interval=10, keepalives_count=5)
     except Exception as e:
-        print(f"PostgreSQL connection failed: {e}. Falling back to SQLite.")
+        if not os.environ.get("ALLOW_SQLITE_FALLBACK"):
+            raise RuntimeError(f"No se pudo conectar a PostgreSQL ({e}). Define ALLOW_SQLITE_FALLBACK=1 solo en local.") from e
+        print(f"PostgreSQL connection failed: {e}. Falling back to SQLite (ALLOW_SQLITE_FALLBACK).")
         USE_POSTGRES = False
         POOL = None
         _SQLITE_DB = None
@@ -33,6 +37,15 @@ else:
     POOL = None
     _SQLITE_DB = None
     _SQLITE_LOCK = threading.Lock()
+
+
+def sql_greatest():
+    """SQLite: MAX(a,b) escalar. PostgreSQL: GREATEST (MAX es agregado)."""
+    return "GREATEST" if USE_POSTGRES else "MAX"
+
+
+def sql_least():
+    return "LEAST" if USE_POSTGRES else "MIN"
 
 
 PG_SCHEMA = """

@@ -1,7 +1,7 @@
 """Comunidad: subidas colaborativas con PostgreSQL/Supabase.
 Reemplaza comunidad.py (SQLite) para producción en Render + Supabase.
 """
-import base64, hashlib, math, threading, time
+import base64, hashlib, math, os, threading, time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,8 @@ QUORUM_DISPOSITIVOS, QUORUM_PESO, MAX_CUOTA = 2, 1.0, 0.75
 TOLERANCIA = 3 * 60
 SUBE, BAJA = 0.06, 10.0
 MAX_AL_DIA, MIN_ENTRE_SUBIDAS, VEL_MAX_KMH = 12, 8 * 60, 110
-RADIO_GPS_M, MAX_REGISTROS_IP = 200, 100
+RADIO_GPS_M = 200
+MAX_REGISTROS_IP = int(os.environ.get("MAX_REGISTROS_IP", "30"))
 K_PRIOR, MIN_OBS_APRENDER = 4, 3
 NIVELES = [(30, "Nuevo"), (55, "Colaborador"), (75, "Fiable"), (101, "Veterano")]
 
@@ -112,19 +113,23 @@ class Comunidad:
                     raise Error("demasiados dispositivos nuevos desde esta red; inténtalo mañana", 429)
                 ahora_dt = _ts_to_dt(ahora)
                 pg.execute("INSERT INTO registros VALUES(%s,%s)", (ip, int(ahora)))
-                pg.execute("INSERT INTO dispositivos(id,pub,creado,ult,rep) VALUES(%s,%s,%s,%s,%s)",
+                pg.execute("INSERT INTO dispositivos(id,pub,creado,ult,rep) VALUES(%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
                            (dev, raw, ahora_dt, ahora_dt, REP_INICIAL))
         return dev, raw
 
     def verificar(self, dev, ts, nonce, firma_b64, msg, ahora, pub_raw=None):
-        if abs(ahora - int(ts)) > 120:
+        try:
+            ts_i = int(ts)
+        except (TypeError, ValueError):
+            raise Error("cabecera X-Ts no válida", 401)
+        if abs(ahora - ts_i) > 120:
             raise Error(f"reloj del dispositivo desajustado o petición antigua (servidor: {int(ahora)})", 401)
         with self.lock:
             if pub_raw is None:
                 fila = pg.execute_one("SELECT pub FROM dispositivos WHERE id=%s", (dev,))
                 if not fila:
                     raise Error("dispositivo desconocido", 401)
-                pub_raw = fila["pub"]
+                pub_raw = bytes(fila["pub"])
             try:
                 sig = base64.b64decode(firma_b64)
                 der = encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
@@ -135,7 +140,6 @@ class Comunidad:
             if pg.execute_one("SELECT 1 FROM nonces WHERE n=%s", (nonce_key,)):
                 raise Error("petición repetida", 401)
             pg.execute("INSERT INTO nonces VALUES(%s,%s)", (nonce_key, int(ahora)))
-            pg.cleanup_old_nonces(ahora=ahora)
         return dev
 
     # ------------------------------------------------------------ reputación
@@ -175,7 +179,7 @@ class Comunidad:
                     strikes_ts = _dt_to_ts(f["strikes_ts"])
                     st = f["strikes"] + 1 if ahora - strikes_ts < 86400 else 1
                     ahora_dt = _ts_to_dt(ahora)
-                    pg.execute("""UPDATE dispositivos SET strikes=%s, strikes_ts=%s, rep=MAX(0, rep-2), bloqueado=%s WHERE id=%s""",
+                    pg.execute(f"""UPDATE dispositivos SET strikes=%s, strikes_ts=%s, rep={pg.sql_greatest()}(0, rep-2), bloqueado=%s WHERE id=%s""",
                                (st, ahora_dt, _ts_to_dt(ahora + 86400) if st >= 6 else _ts_to_dt(0), dev))
                 raise Error(msg)
 
@@ -208,7 +212,7 @@ class Comunidad:
                           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                        (dev, viaje, cluster, pred["linea"], pred["sentido"], pred["variante"],
                         ahora_int, pred["llegada_ts"], pred["inicio_ts"], peso, gps))
-            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (ahora_int, dev))
+            pg.execute("UPDATE dispositivos SET subidas=subidas+1, ult=%s WHERE id=%s", (_ts_to_dt(ahora_int), dev))
             estado = self._evaluar(viaje, cluster, ahora)
             self._snap_ts = 0
             return dict(estado=estado, gps=bool(gps))
@@ -230,11 +234,11 @@ class Comunidad:
             if f["evaluado"]:
                 continue
             if f["id"] in ids_ok:
-                pg.execute("UPDATE dispositivos SET rep=MIN(100, rep+(100-rep)*%s), confirmadas=confirmadas+1 WHERE id=%s",
+                pg.execute(f"UPDATE dispositivos SET rep={pg.sql_least()}(100, rep+(100-rep)*%s), confirmadas=confirmadas+1 WHERE id=%s",
                            (SUBE, f["dev"]))
                 est = "confirmada"
             else:
-                pg.execute("UPDATE dispositivos SET rep=MAX(0, rep-%s), discrepantes=discrepantes+1 WHERE id=%s",
+                pg.execute(f"UPDATE dispositivos SET rep={pg.sql_greatest()}(0, rep-%s), discrepantes=discrepantes+1 WHERE id=%s",
                            (BAJA, f["dev"]))
                 est = "discrepante"
             pg.execute("UPDATE subidas SET estado=%s, evaluado=1 WHERE id=%s", (est, f["id"]))
@@ -308,12 +312,27 @@ class Comunidad:
         return None
 
     def guardar_fcm_token(self, dev_id: str, fcm_token: str):
+        """UPDATE (no INSERT..ON CONFLICT: en PostgreSQL viola NOT NULL antes de resolver el conflicto)."""
         with self.lock:
-            pg.execute(
-                "INSERT INTO dispositivos (id, fcm_token) VALUES (%s, %s) "
-                "ON CONFLICT (id) DO UPDATE SET fcm_token=EXCLUDED.fcm_token",
-                (dev_id, fcm_token)
-            )
+            if not pg.execute_one("SELECT 1 FROM dispositivos WHERE id=%s", (dev_id,)):
+                raise Error("dispositivo no encontrado", 404)
+            pg.execute("UPDATE dispositivos SET fcm_token=%s WHERE id=%s", (fcm_token, dev_id))
+
+    def borrar_fcm_token(self, dev_id: str):
+        with self.lock:
+            pg.execute("UPDATE dispositivos SET fcm_token=NULL WHERE id=%s", (dev_id,))
+
+    _ult_mant = 0
+
+    def mantenimiento(self, ahora):
+        """Limpieza periódica (máx. cada 5 min): nonces, registros por IP, subidas y ubicaciones viejas."""
+        if ahora - self._ult_mant < 300:
+            return
+        self._ult_mant = ahora
+        with self.lock:
+            pg.cleanup_old_nonces(ahora=int(ahora))
+            pg.execute("DELETE FROM registros WHERE ts < %s", (int(ahora - 2 * 86400),))
+        self.limpiar(ahora)
 
     def obtener_fcm_token(self, dev_id: str) -> str:
         row = pg.execute_one("SELECT fcm_token FROM dispositivos WHERE id=%s", (dev_id,))

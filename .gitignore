@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+datos/*.db
+datos/*.db-*
+.env
+*.json.bak
+/etc/
+guaguas-ftv1-*.json

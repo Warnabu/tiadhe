@@ -2,7 +2,7 @@ services:
   - type: web
     name: tiadhe-backend
     runtime: python
-    buildCommand: "pip install -r files/requirements.txt"
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT servidor:app"
     envVars:
       - key: PYTHON_VERSION

@@ -145,7 +145,7 @@ for i in range(3):
                       ts=EXCLUDED.ts, pred_ts=EXCLUDED.pred_ts, inicio_ts=EXCLUDED.inicio_ts,
                       n=EXCLUDED.n, peso=EXCLUDED.peso, creado=EXCLUDED.creado""",
                (f"2026091{i}|{num}|{sent}|{sal['h']}|{var}", cid1, num, sent, var,
-                epoch("10:00:00") + round((off1 + 20) * 60), epoch("10:00:00"), epoch("09:59:00"), 3, 1.2, epoch("10:30:00")))
+                epoch("10:00:00") + round((off1 + 20) * 60), epoch("10:00:00"), epoch("09:59:00"), 3, 1.2, datetime.fromtimestamp(epoch("10:30:00"), s.TZ)))
 COM._snap_ts = -1e9
 aprend = COM.aprendido(num, sent, var, p1["id"], off1)
 check(aprend is not None and off1 < aprend < off1 + 20, f"3 observaciones ({off1 + 20:.0f} min) + modelo ({off1:.0f} min) -> estimación mezclada {aprend:.1f} min")

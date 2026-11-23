@@ -36,9 +36,11 @@ const Guaguas = (() => {
   let modoDinamico = localStorage.getItem('modoDinamico') === 'true';
   let cambioModo = () => {};
 
+  let listoP = Promise.resolve();   // se resuelve cuando el dispositivo está registrado en el servidor
   function setInternalToken(token) {
     internalToken = token;
-    if (token) inicializarFirebase();
+    // Si el permiso ya estaba concedido, registra el token FCM sin molestar. Pedir permiso se hace desde un gesto (activarNotificaciones).
+    if (token && modoDinamico && window.Notification && Notification.permission === "granted") activarNotificaciones(false);
   }
 
   function setModoDinamico(valor) {
@@ -65,64 +67,78 @@ const Guaguas = (() => {
     if (internalToken) headers["Authorization"] = "Bearer " + internalToken;
     const r = await fetch(ruta, { method: metodo, headers, body: texto || undefined });
     const j = await r.json().catch(() => null);
-    if (!r.ok) throw new Error((j && j.error) || `error ${r.status}`);
+    if (!r.ok) {
+      const e = new Error((j && j.error) || `error ${r.status}`);
+      e.status = r.status; e.retryAfter = Number(r.headers.get("Retry-After")) || 0;
+      throw e;
+    }
     return j;
   }
 
   async function registrarFCMToken(fcmToken) {
-    if (!internalToken) return;
+    if (localStorage.getItem("fcmTokenEnviado") === fcmToken) return true;   // ya registrado: no repetir en cada carga
+    await listoP;                                                             // el dispositivo debe existir en el servidor
     try {
       await pedir("POST", "/api/register-fcm-token", { fcm_token: fcmToken });
+      localStorage.setItem("fcmTokenEnviado", fcmToken);
+      return true;
     } catch (e) {
       console.warn("No se pudo registrar FCM token:", e.message);
+      return false;
     }
   }
 
-  async function inicializarFirebase() {
-    if (!window.firebaseMessaging) return;
+  let fcmEscuchando = false;
+  // pedirPermiso=true solo desde un gesto del usuario. Devuelve 'ok' | 'denegado' | 'no-soportado' | 'error'.
+  async function activarNotificaciones(pedirPermiso = true) {
+    if (!window.Notification || !window.firebaseGetToken) return "no-soportado";
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") return;
-      const vapidKey = window.VAPID_KEY;
-      const token = await getToken(window.firebaseMessaging, { vapidKey });
-      if (token) {
-        await registrarFCMToken(token);
+      if (Notification.permission === "default" && pedirPermiso) await Notification.requestPermission();
+      if (Notification.permission === "denied") return "denegado";
+      if (Notification.permission !== "granted") return "denegado";
+      const reg = window.swListo ? await window.swListo : null;
+      if (!reg) return "no-soportado";
+      await navigator.serviceWorker.ready;
+      const token = await window.firebaseGetToken(reg);   // usa nuestro sw.js (no existe firebase-messaging-sw.js)
+      if (!token) return "error";
+      if (!(await registrarFCMToken(token))) return "error";
+      if (!fcmEscuchando && window.firebaseOnMessage) {
+        fcmEscuchando = true;
+        // Con la app en primer plano FCM no muestra nada solo: lo mostramos desde el service worker.
+        window.firebaseOnMessage(payload => {
+          const n = payload.notification || {};
+          reg.showNotification(n.title || "Guaguas FTV", { body: n.body || "", icon: "/icons/icon-192.png" });
+        });
       }
+      return "ok";
     } catch (e) {
-      console.warn("FCM token error:", e.message);
+      console.warn("FCM:", e.code || "", e.message);
+      return "error";
     }
-
-    onMessage(window.firebaseMessaging, (payload) => {
-      console.log("FCM message received:", payload);
-      if (payload.notification) {
-        new Notification(payload.notification.title, { body: payload.notification.body, icon: "/icons/icon-192.png" });
-      }
-    });
   }
 
   async function iniciar() {
-    db = await abrirDB();
-    const guardada = await leer(db, "par");
-    if (guardada) {
-      ({ priv, pub, dev } = guardada);
-    } else {
-      const par = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-      priv = par.privateKey;
-      pub = new Uint8Array(await crypto.subtle.exportKey("raw", par.publicKey));
-      dev = await id_de(pub);
-      await guardar(db, "par", { priv, pub, dev });
-    }
-
-    try {
-      const j = await pedir("POST", "/api/registro", { pub: b64(pub) });
-      perfil = j.perfil; cambioPerfil(perfil);
-    } catch (e) {
-      console.warn("No se pudo registrar el dispositivo:", e.message);
-    }
-
-    // Firebase token exchange now handled in index.html to avoid duplication
-    // Just listen for internalToken changes if needed elsewhere
-
+    listoP = (async () => {
+      db = await abrirDB();
+      const guardada = await leer(db, "par");
+      if (guardada) {
+        ({ priv, pub, dev } = guardada);
+      } else {
+        const par = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+        priv = par.privateKey;
+        pub = new Uint8Array(await crypto.subtle.exportKey("raw", par.publicKey));
+        dev = await id_de(pub);
+        await guardar(db, "par", { priv, pub, dev });
+      }
+      // El alta es idempotente en el servidor. Si hay 429 (límite por red) NO se reintenta: se espera a la próxima carga.
+      try {
+        const j = await pedir("POST", "/api/registro", { pub: b64(pub) });
+        perfil = j.perfil; cambioPerfil(perfil);
+      } catch (e) {
+        console.warn("No se pudo registrar el dispositivo:", e.message, e.retryAfter ? `(reintentar en ${e.retryAfter}s)` : "");
+      }
+    })();
+    await listoP;
     return dev;
   }
 
@@ -151,6 +167,6 @@ const Guaguas = (() => {
     getModoDinamico: () => modoDinamico,
     setModoDinamico,
     onModoChange: f => { cambioModo = f; setTimeout(() => f(modoDinamico), 0); },
-    setInternalToken,
+    setInternalToken, activarNotificaciones,
   };
 })();
