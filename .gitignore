@@ -6,3 +6,7 @@ datos/*.db-*
 *.json.bak
 /etc/
 guaguas-ftv1-*.json
+
+datos/.cache_osrm/
+datos/paradas_reales.original.json
+datos/preview_ajuste.geojson
