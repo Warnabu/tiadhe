@@ -42,18 +42,20 @@ python test_motor_senales.py                          # motor de detección de s
 
 ```bash
 python importar_mapas.py              # paradas y trazados desde los mapas de Google de tiadhe.com
-python reconstruir_trazados.py        # trazados por carretera real (OSRM), rotondas como esquinas, paradas recolocadas
+python ajustar_rutas.py               # pinta las rutas sobre las calles reales (map matching)
 python revisar_trazados.py            # informe de solo lectura: tramos largos, puntas, paradas lejos del trazado
 python analizar_rutas.py              # análisis de k, desvíos y paradas por línea
 ```
 
-`reconstruir_trazados.py` necesita `pip install requests mapbox-vector-tile` (no hace falta en el servidor). Usa el trazado de Google solo como guía: enruta de parada en parada por la red viaria
-(OSRM, en el sentido de la marcha), recorre las rotondas por su carril, quita los rodeos que el original no tiene
-(vueltas a manzanas, pasar de largo una parada y volver) pero conserva los cambios de sentido reales, y donde la ruta
-calculada no encaja y el original ya va por calles reales, conserva el original. Coloca cada parada en su marquesina
-de OpenStreetMap (o sobre la vía) y recalcula `k`. Avisa de los
-tramos que no encajan con el original para revisarlos a mano. Las respuestas de OSRM se guardan en
-`datos/.cache_osrm/`.
+`datos/trazados_originales.json` guarda los trazados tal como vienen de los mapas de Google y es la entrada fija de
+`ajustar_rutas.py` (que necesita `pip install requests mapbox-vector-tile`, no hace falta en el servidor). El script
+"pega" cada trazado original a la red de calles de OpenStreetMap con un modelo oculto de Markov (el método estándar
+para ajustar un GPS a un mapa): la ruta va por las mismas calles que el original, sin inventar rodeos, y las
+diagonales y octógonos dibujados a mano quedan sobre la calle real. Las líneas se ajustan dos veces: la segunda da
+preferencia a las calles que usan otras líneas, para que los trazados imprecisos caigan en el corredor común. Donde
+el original va por una calle que no está en OpenStreetMap se conserva su dibujo. Cada parada oficial a ≤25 m de la
+ruta se deja donde está; si no, se pone en su marquesina de OSM o sobre la calle. La red de calles se descarga una
+vez (teselas de OSRM) y queda en `datos/.cache_osrm/red/`.
 
 Donde varias líneas comparten calle, `bandas.py` las separa en paralelo (como un plano de metro): el servidor
 calcula qué líneas comparten cada tramo y la web desplaza cada una unos píxeles según el zoom.
