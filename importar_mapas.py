@@ -116,8 +116,44 @@ def proyectar(traza, acum, lat, lon):
     return mejor
 
 
-def decimar(t, n=500):
-    return [[round(a, 5), round(b, 5)] for a, b in t[::max(1, len(t) // n)]] + ([[round(t[-1][0], 5), round(t[-1][1], 5)]] if len(t) > n else [])
+def simplificar(t, tol_m=4.0, max_pts=6000):
+    """Douglas-Peucker: quita puntos redundantes en tramos rectos pero CONSERVA las curvas.
+    (El submuestreo uniforme anterior t[::n] dejaba segmentos de hasta 2 km que cortan las curvas
+    en diagonal.) Si el resultado supera max_pts se sube la tolerancia hasta que quepa."""
+    if len(t) < 3:
+        return [[round(a, 6), round(b, 6)] for a, b in t]
+    k = math.cos(math.radians(t[0][0]))
+    xy = [(lo * k * 111.320, la * 110.574) for la, lo in t]  # km aproximados, suficiente a esta escala
+
+    def dp(eps):
+        keep = [False] * len(t)
+        keep[0] = keep[-1] = True
+        pila = [(0, len(t) - 1)]
+        while pila:
+            i, j = pila.pop()
+            (ax, ay), (bx, by) = xy[i], xy[j]
+            dx, dy = bx - ax, by - ay
+            L = math.hypot(dx, dy)
+            dmax, im = -1.0, None
+            for m in range(i + 1, j):
+                px, py = xy[m]
+                d = math.hypot(px - ax, py - ay) if L == 0 else abs(dx * (ay - py) - (ax - px) * dy) / L
+                if d > dmax:
+                    dmax, im = d, m
+            if im is not None and dmax > eps:
+                keep[im] = True
+                pila += [(i, im), (im, j)]
+        return [t[i] for i, kp in enumerate(keep) if kp]
+
+    eps = tol_m / 1000
+    res = dp(eps)
+    while len(res) > max_pts:
+        eps *= 1.5
+        res = dp(eps)
+    return [[round(a, 6), round(b, 6)] for a, b in res]
+
+
+decimar = simplificar  # compatibilidad
 
 
 def construir(paradas, trazados, origen=None):
@@ -157,7 +193,7 @@ def construir(paradas, trazados, origen=None):
         avisos.append(f"{len(sueltos)} tramos del mapa no conectan con el recorrido")
     return dict(valida=not invalida, avisos=invalida + avisos, km_total=round(acum[-1], 1),
                 descartadas=[n for n, _ in lejos][:20], paradas=res,
-                trazado=[decimar(cadena)] + [decimar(t, 200) for t in sueltos])
+                trazado=[simplificar(cadena)] + [simplificar(t) for t in sueltos])
 
 
 def main(args):
