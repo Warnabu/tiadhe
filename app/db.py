@@ -207,12 +207,16 @@ def _migrar(cur) -> None:
                     "WHERE n.nspname = current_schema() AND c.relkind = 'r' AND NOT c.relrowsecurity "
                     "AND pg_get_userbyid(c.relowner) = current_user")
         for fila in cur.fetchall():
-            print(f"SEGURIDAD: activando Row Level Security en {fila['t']}")
+            print(f"SEGURIDAD: activando Row Level Security en {fila['t']}", flush=True)
             cur.execute(f'ALTER TABLE "{fila["t"]}" ENABLE ROW LEVEL SECURITY')
         cur.execute("RELEASE SAVEPOINT rls")
+        cur.execute("SELECT count(*) FILTER (WHERE c.relrowsecurity) AS si, count(*) AS total FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relkind = 'r'")
+        r = cur.fetchone()
+        print(f"SEGURIDAD: Row Level Security activo en {r['si']} de {r['total']} tablas", flush=True)
     except Exception as e:   # nunca impedir que el servidor arranque por esto
         cur.execute("ROLLBACK TO SAVEPOINT rls")
-        print(f"AVISO SEGURIDAD: no se pudo activar Row Level Security ({e})")
+        print(f"AVISO SEGURIDAD: no se pudo activar Row Level Security ({e})", flush=True)
 
 
 def init_schema() -> None:
