@@ -12,13 +12,14 @@ app/             lo que corre en producción
   comunidad.py     avisos "me he subido": firmas, consenso, reputación, aprendizaje
   db.py            PostgreSQL (SQLite en local)
   bandas.py        líneas en paralelo donde comparten calle
+  seguridad.py     cabeceras HTTP, IP real detrás del proxy, límite de peticiones por IP
 web/             la web (PWA): index.html, cliente.js, sw.js
 ios/             app iOS (SwiftUI) — montaje en docs/IOS_SETUP_GUIDE.md
 datos/           horarios, paradas y trazados — qué es cada archivo en datos/README.md
 herramientas/    scripts para preparar las rutas (importar, ajustar a las calles, revisar)
 investigacion/   prototipo de detección automática de subida (NO está en producción)
 tests/           pruebas del servidor
-docs/            guías
+docs/            guías (iOS, base de datos)
 servidor.py      punto de entrada (Render arranca `gunicorn servidor:app`)
 ```
 
@@ -36,6 +37,7 @@ Con `GUAGUAS_DEBUG=1` se puede simular la hora: `/api/parada/<id>?hora=2026-09-2
 
 ```bash
 ALLOW_SQLITE_FALLBACK=1 python tests/test_comunidad.py
+ALLOW_SQLITE_FALLBACK=1 python tests/test_seguridad.py
 ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE_URL real
 python investigacion/test_motor_senales.py
 ```
@@ -53,6 +55,14 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
 Render (`render.yaml`): instala `requirements.txt` y arranca `gunicorn servidor:app`, Python de `.python-version`.
 Variables: `DATABASE_URL`, `JWT_SECRET`, `FIREBASE_CRED_PATH`, `FIREBASE_AUTH_HOST`, `TRUST_CF_CONNECTING_IP` /
 `GUAGUAS_PROXY_HOPS` (IP real detrás de proxy), `MAX_REGISTROS_IP`.
+
+## Base de datos y seguridad
+
+- La base de datos (Supabase) y cómo consultarla: [docs/BASE_DE_DATOS.md](docs/BASE_DE_DATOS.md).
+- Seguridad (`app/seguridad.py`): cabeceras HTTP (HSTS, anti-clickjacking, CSP), límite de peticiones por IP en lo que
+  escribe o cuesta, peticiones de máx. 32 KB, Leaflet con integridad (SRI), modo pruebas imposible en producción,
+  Row Level Security en todas las tablas de Supabase y las IP guardadas solo como huella (HMAC).
+- Nunca subas al repo `.env`, el JSON de la cuenta de servicio de Firebase ni claves de Supabase.
 
 ## Cómo funciona
 

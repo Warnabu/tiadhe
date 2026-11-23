@@ -198,6 +198,21 @@ def _migrar(cur) -> None:
             d = tipos.get((t, c))
             if d and d not in ("bigint", "integer", "smallint"):
                 print(f"AVISO ESQUEMA: {t}.{c} es {d}, el código espera entero")
+    # Seguridad (Supabase): la API REST pública de Supabase expone todas las tablas del esquema. Con Row Level
+    # Security activado y sin ninguna política, nadie puede leerlas ni escribirlas por esa vía (ni con la clave
+    # "anon"). El servidor no se ve afectado: se conecta como propietario de las tablas, que se salta RLS.
+    try:
+        cur.execute("SAVEPOINT rls")
+        cur.execute("SELECT c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = current_schema() AND c.relkind = 'r' AND NOT c.relrowsecurity "
+                    "AND pg_get_userbyid(c.relowner) = current_user")
+        for fila in cur.fetchall():
+            print(f"SEGURIDAD: activando Row Level Security en {fila['t']}")
+            cur.execute(f'ALTER TABLE "{fila["t"]}" ENABLE ROW LEVEL SECURITY')
+        cur.execute("RELEASE SAVEPOINT rls")
+    except Exception as e:   # nunca impedir que el servidor arranque por esto
+        cur.execute("ROLLBACK TO SAVEPOINT rls")
+        print(f"AVISO SEGURIDAD: no se pudo activar Row Level Security ({e})")
 
 
 def init_schema() -> None:

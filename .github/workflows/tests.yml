@@ -18,6 +18,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Comunidad (firmas, consenso, reputación)
         run: python tests/test_comunidad.py
+      - name: Seguridad (IP real, cabeceras, límites)
+        run: python tests/test_seguridad.py
       - name: Regresiones de producción (con SQLite)
         run: python tests/test_produccion.py
       - name: Prototipo de detección de subida

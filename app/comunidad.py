@@ -1,7 +1,7 @@
 """Comunidad: subidas colaborativas con PostgreSQL/Supabase.
 Reemplaza comunidad.py (SQLite) para producción en Render + Supabase.
 """
-import base64, hashlib, math, os, threading, time
+import base64, hashlib, hmac, math, os, threading, time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -97,7 +97,15 @@ class Comunidad:
     def id_de(pub_raw):
         return hashlib.sha256(pub_raw).hexdigest()[:32]
 
+    @staticmethod
+    def seudonimo_ip(ip):
+        """Huella irreversible de la IP (HMAC con el secreto del servidor): basta para contar altas por red sin
+        guardar la IP en la base de datos (dato personal según el RGPD)."""
+        clave = (os.environ.get("JWT_SECRET") or "solo-desarrollo-local").encode()
+        return hmac.new(clave, ip.encode(), hashlib.sha256).hexdigest()[:32]
+
     def registrar(self, pub_b64, ip, ahora):
+        ip = self.seudonimo_ip(ip)
         try:
             raw = base64.b64decode(pub_b64)
             ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), raw)

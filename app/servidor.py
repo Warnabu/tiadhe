@@ -16,6 +16,7 @@ from flask import Flask, jsonify, request
 from .comunidad import Comunidad, Error, km_ll, mensaje
 
 from . import bandas
+from .seguridad import ip_real, proteger
 from . import guaguas as g
 from . import db as pg_db
 
@@ -30,7 +31,8 @@ if not hasattr(g, "nombre_destino"):
     raise SystemExit("guaguas.py es una versión antigua: sustitúyelo por el último y reinicia el servidor. \nLos archivos guaguas.py, servidor.py, importar_mapas.py y web/index.html deben ser de la misma entrega.")
 
 TZ = ZoneInfo("Atlantic/Canary")
-DEBUG = bool(os.environ.get("GUAGUAS_DEBUG"))
+# Modo pruebas (simular la hora con ?hora=, endpoints /api/debug/*). Nunca en producción, aunque se ponga la variable.
+DEBUG = bool(os.environ.get("GUAGUAS_DEBUG")) and not os.environ.get("RENDER")
 RAIZ = Path(__file__).resolve().parent.parent
 app = Flask(__name__, static_folder=str(RAIZ / "web"), static_url_path="")
 HORARIOS, BASE = g.cargar()
@@ -141,17 +143,20 @@ if _HOPS:  # proxy propio (nginx...): X-Forwarded-For con N saltos de confianza
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_HOPS)
 # Render va detrás de Cloudflare, que fija CF-Connecting-IP.
-TRUST_CF = bool(os.environ.get("TRUST_CF_CONNECTING_IP") or os.environ.get("RENDER"))
+# Detrás del proxy de Render (o de otro, con TRUST_CF_CONNECTING_IP=1): la IP real va en las cabeceras.
+DETRAS_DE_PROXY = bool(os.environ.get("TRUST_CF_CONNECTING_IP") or os.environ.get("RENDER")) and not _HOPS
 
 
 def client_ip():
-    """IP real del cliente. Sin esto todos los usuarios comparten la IP del proxy de Render."""
-    ip = (request.headers.get("CF-Connecting-IP") or "").strip() if TRUST_CF else ""
-    ip = ip or request.remote_addr or "?"
-    if os.environ.get("GUAGUAS_LOG_IP"):  # diagnóstico temporal: ver qué cabeceras llegan de verdad
+    """IP real del visitante (ver seguridad.ip_real). Sin esto todos comparten la IP del proxy de Render."""
+    ip = ip_real(request, DETRAS_DE_PROXY)
+    if os.environ.get("GUAGUAS_LOG_IP"):  # diagnóstico: ver qué cabeceras llegan de verdad
         app.logger.warning("client_ip=%s remote_addr=%s CF=%s XFF=%s", ip, request.remote_addr,
                            request.headers.get("CF-Connecting-IP"), request.headers.get("X-Forwarded-For"))
     return ip
+
+
+proteger(app, client_ip)   # cabeceras de seguridad, límite por IP, tamaño máximo (app/seguridad.py)
 
 
 def ahora_ts():

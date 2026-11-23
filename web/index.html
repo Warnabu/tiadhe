@@ -8,7 +8,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
 <style>
 :root{--bg:#fff;--card:rgba(255,255,255,.86);--tx:#14181d;--tx2:#68717d;--sep:rgba(60,72,88,.14);--fill:rgba(120,130,145,.13);--acc:#0b6e99;--ok:#1e9b57;--red:#d92f2f;--halo:#fff;
   --sh:0 1px 2px rgba(16,24,40,.08),0 10px 30px rgba(16,24,40,.16);--r:14px}
@@ -151,7 +151,7 @@ html[data-t=dark] .av{color:#06222e}
 </div></div>
 <div id="toast" role="status"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script>
 // Promesa que resuelve (true/false) cuando el módulo de Firebase termina de iniciar. Los scripts clásicos esperan a esto.
 window.firebaseListo = new Promise(r => { window.__firebaseResolve = r; });
@@ -282,8 +282,20 @@ function resaltar(nums) {
     cs.forEach(c => c.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : .12 }));   // sin bringToFront: taparía las paradas
   });
 }
+// Paradas recientes (en este navegador) y enlace compartible ?parada=<id>
+const recientes = () => { try { return JSON.parse(localStorage.getItem('recientes') || '[]'); } catch (_) { return []; } };
+function recordar(p) {
+  try { localStorage.setItem('recientes', JSON.stringify([p.id, ...recientes().filter(x => x !== p.id)].slice(0, 5))); } catch (_) {}
+}
+function enlace(p) {
+  const u = new URL(location.href);
+  if (p && p.tipo === 'parada') u.searchParams.set('parada', p.id); else u.searchParams.delete('parada');
+  history.replaceState(null, '', u.pathname + u.search + u.hash);
+}
 function elegir(p) {
   actual = p; filtro = null; marcadas = new Set();
+  if (p.tipo === 'parada') recordar(p);
+  enlace(p);
   resaltar(p.tipo === 'parada' ? p.lineas : null);
   if (marcaSel) map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 13, color: '#ff3b30', weight: 3, fill: false }).addTo(map);
@@ -340,17 +352,28 @@ function pintar(d, p) {
   });
   $('nota').textContent = ds.length > 1 ? 'Hay guaguas en los dos sentidos: elige el de tu destino.' : '';
 }
-$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); resaltar(null); };
+$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); resaltar(null); enlace(null); };
 
 // ── Búsqueda y ubicación ──
 const cercana = (la, lo) => paradas.slice().sort((a, b) => Math.hypot(a.lat - la, (a.lon - lo) * .88) - Math.hypot(b.lat - la, (b.lon - lo) * .88))[0];
-$('buscar').oninput = e => {
-  const q = norm(e.target.value.trim()), s = $('sug');
-  if (!q) { s.classList.add('oculto'); return; }
-  const r = paradas.filter(p => norm(p.nombre).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'Líneas ' + p.lineas.join(', '), f: () => { foco(p); elegir({ tipo: 'parada', ...p }); } }));
-  lugares.filter(l => norm(l.n).includes(q)).slice(0, 3).forEach(l => r.push({ t: l.n, sub: 'Lugar · parada más cercana', f: () => { const c = cercana(l.lat, l.lon); if (c) { foco(c); elegir({ tipo: 'parada', ...c }); } } }));
+function sugerencias(r) {
+  const s = $('sug');
   s.innerHTML = ''; s.classList.toggle('oculto', !r.length);
   r.forEach(x => { const b = document.createElement('button'); b.innerHTML = `${esc(x.t)}<small>${esc(x.sub)}</small>`; b.onclick = () => { $('buscar').value = ''; $('buscar').blur(); x.f(); }; s.appendChild(b); });
+}
+function mostrarRecientes() {
+  if ($('buscar').value.trim()) return;
+  sugerencias(recientes().map(id => paradas.find(p => p.id === id)).filter(Boolean)
+    .map(p => ({ t: p.nombre, sub: 'Reciente · Líneas ' + p.lineas.join(', '), f: () => { foco(p); elegir({ tipo: 'parada', ...p }); } })));
+}
+$('buscar').onfocus = mostrarRecientes;
+$('buscar').onblur = () => setTimeout(() => $('sug').classList.add('oculto'), 200);   // tras el clic en una sugerencia
+$('buscar').oninput = e => {
+  const q = norm(e.target.value.trim()), s = $('sug');
+  if (!q) { mostrarRecientes(); return; }
+  const r = paradas.filter(p => norm(p.nombre).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'Líneas ' + p.lineas.join(', '), f: () => { foco(p); elegir({ tipo: 'parada', ...p }); } }));
+  lugares.filter(l => norm(l.n).includes(q)).slice(0, 3).forEach(l => r.push({ t: l.n, sub: 'Lugar · parada más cercana', f: () => { const c = cercana(l.lat, l.lon); if (c) { foco(c); elegir({ tipo: 'parada', ...c }); } } }));
+  sugerencias(r);
 };
 $('gps').onclick = () => {
   if (!navigator.geolocation) return toast('Tu navegador no permite la ubicación.');
@@ -460,7 +483,11 @@ ui();
 Guaguas.onModoChange(() => { ui(); if (actual) cargar(); });
 Guaguas.onPerfil(() => { if (!$('sheet').classList.contains('oculto')) ajustes(); });
 Guaguas.iniciar().catch(e => console.warn('identidad de dispositivo no disponible:', e.message));
-datos().catch(e => toast('Error cargando datos: ' + e.message + '. Abre la página desde el servidor Flask.', 12000));
+datos().then(() => {
+  const id = new URLSearchParams(location.search).get('parada');
+  const p = id && paradas.find(x => x.id === id);
+  if (p) { foco(p, 16); elegir({ tipo: 'parada', ...p }); }
+}).catch(e => { console.warn('datos:', e.message); toast('No se pudieron cargar las paradas. Comprueba tu conexión y recarga la página.', 12000); });
 (async () => {
   authListo = await window.firebaseListo;
   if (!authListo) return console.warn('Firebase no disponible: modo estático.');
