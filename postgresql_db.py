@@ -176,6 +176,29 @@ def _get_sqlite_db():
         return _SQLITE_DB
 
 
+# Columnas que el código trata como enteros (epoch). Si la BD real viene de un esquema antiguo, se corrige o se avisa.
+_ENTEROS = {"subidas": ("ts", "pred_ts", "inicio_ts", "evaluado"), "observaciones": ("ts", "pred_ts", "inicio_ts"),
+            "nonces": ("ts",), "registros": ("ts",), "ubicaciones_activas": ("ts",)}
+
+
+def _migrar(cur) -> None:
+    """CREATE TABLE IF NOT EXISTS no corrige tablas viejas. Aquí se arreglan los tipos conocidos y se avisa del resto."""
+    cur.execute("SELECT table_name AS t, column_name AS c, data_type AS d FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ANY(%s)", (list(_ENTEROS),))
+    tipos = {(r["t"], r["c"]): r["d"] for r in cur.fetchall()}
+    if tipos.get(("subidas", "evaluado")) == "boolean":
+        print("MIGRACIÓN: subidas.evaluado boolean -> bigint")
+        cur.execute("ALTER TABLE subidas ALTER COLUMN evaluado DROP DEFAULT")
+        cur.execute("ALTER TABLE subidas ALTER COLUMN evaluado TYPE BIGINT USING (CASE WHEN evaluado THEN 1 ELSE 0 END)")
+        cur.execute("ALTER TABLE subidas ALTER COLUMN evaluado SET DEFAULT 0")
+        tipos[("subidas", "evaluado")] = "bigint"
+    for t, cols in _ENTEROS.items():
+        for c in cols:
+            d = tipos.get((t, c))
+            if d and d not in ("bigint", "integer", "smallint"):
+                print(f"AVISO ESQUEMA: {t}.{c} es {d}, el código espera entero")
+
+
 def init_schema() -> None:
     """Initialize database schema (idempotent)."""
     global _INITIALIZED
@@ -187,6 +210,8 @@ def init_schema() -> None:
             try:
                 with conn.cursor() as cur:
                     cur.execute(PG_SCHEMA)
+                    conn.commit()
+                    _migrar(cur)
                     conn.commit()
             finally:
                 POOL.putconn(conn)
