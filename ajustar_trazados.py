@@ -27,8 +27,8 @@ from importar_mapas import km, proyectar, simplificar
 DATOS = Path(__file__).parent / "datos"
 CACHE = DATOS / ".cache_osrm"
 SERVIDOR = "https://router.project-osrm.org"
-VENTANA, SOLAPE = 60, 2          # puntos por petición y puntos compartidos entre ventanas
-RADIO_M = 50                     # distancia máxima a la que un punto puede "engancharse" a una vía
+VENTANA, SOLAPE = 10, 2          # puntos por petición y puntos compartidos entre ventanas (OSRM público limita a ~12)
+RADIO_M = 20                     # distancia máxima a la que un punto puede "engancharse" a una vía (OSRM público)
 MIN_COBERTURA = 0.80             # fracción de puntos originales a <60 m del resultado
 RATIO_LONG = (0.70, 1.60)        # longitud ajustada / original (las curvas cortadas hacen que crezca)
 MIN_AJUSTADAS = 0.60             # fracción mínima de ventanas buenas para aceptar la línea
@@ -73,7 +73,8 @@ def longitud(t):
 
 
 def dist_a_traza(t, p):
-    k, mejor = math.cos(math.radians(p[0])), 1e9
+    k = math.cos(math.radians(p[0]))
+    mejor = 1e9
     for (ay, ax), (by, bx) in zip(t, t[1:]):
         dx, dy = (bx - ax) * k, by - ay
         L = dx * dx + dy * dy
@@ -160,12 +161,12 @@ def main(args):
         orig = v["trazado"][0]
         nueva, ok, total, fallos = ajustar_traza(orig, servidor)
         aceptada = ok / total >= MIN_AJUSTADAS
-        print(f"L{num}: {ok}/{total} ventanas ajustadas  {longitud(orig):.1f} km → {longitud(nueva):.1f} km  "
+        print(f"L{num}: {ok}/{total} ventanas ajustadas  {longitud(orig):.1f} km -> {longitud(nueva):.1f} km  "
               f"{'ACEPTADA' if aceptada else 'RECHAZADA (se deja como estaba)'}")
         for ini, motivo in fallos[:4]:
-            print(f"     · ventana desde el punto {ini}: {motivo} → se conserva el original")
+            print(f"     · ventana desde el punto {ini}: {motivo} -> se conserva el original")
         if len(fallos) > 4:
-            print(f"     · … y {len(fallos) - 4} ventanas más conservadas")
+            print(f"     · ... y {len(fallos) - 4} ventanas mas conservadas")
         feats.append({"type": "Feature", "properties": {"linea": num, "tipo": "original", "stroke": "#888888"},
                       "geometry": {"type": "LineString", "coordinates": [[lo, la] for la, lo in orig]}})
         if aceptada:
