@@ -44,7 +44,7 @@ struct GuaguasFTVApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authManager = AuthManager()
     @StateObject private var locationManager = LocationManager()
-    @StateObject private var apiClient = APIClient()
+    @StateObject private var apiClient = APIClient.shared   // una sola instancia (AuthManager también la usa)
 
     var body: some Scene {
         WindowGroup {

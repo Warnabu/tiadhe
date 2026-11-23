@@ -234,11 +234,11 @@ mq.addEventListener('change', tema); tema();
 addEventListener('resize', () => map.invalidateSize());
 
 // ── Datos ──
-let paradas = [], lugares = [], colores = {}, actual = null, filtro = null, timer = null, marcaSel = null, marcaYo = null, marcadas = new Set();
+let paradas = [], lugares = [], colores = {}, rutas = {}, actual = null, filtro = null, timer = null, marcaSel = null, marcaYo = null, marcadas = new Set();
 async function datos() {
   const [lineas, ps, osm, lug] = await Promise.all([json('/api/lineas'), json('/api/paradas'), json('/api/osm'), json('/api/lugares')]);
   lugares = lug; paradas = ps;
-  lineas.forEach(l => { colores[l.num] = l.color; L.polyline(l.trazado, { color: l.color, weight: 3.5, opacity: .75, interactive: false }).addTo(map); });
+  lineas.forEach(l => { colores[l.num] = l.color; rutas[l.num] = L.polyline(l.trazado, { color: l.color, weight: 3.5, opacity: .75, interactive: false }).addTo(map); });
   osm.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
     .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon })));
   ps.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
@@ -248,8 +248,17 @@ function foco(p, z = 15) {
   map.setView([p.lat, p.lon], Math.max(map.getZoom(), z), { animate: false });
   if (!ancho()) map.panBy([0, Math.round(innerHeight * .2)], { animate: false });
 }
+// Al elegir una parada se resaltan los recorridos de sus líneas y se atenúan los demás.
+function resaltar(nums) {
+  const set = nums && nums.length ? new Set(nums) : null;
+  Object.entries(rutas).forEach(([n, r]) => {
+    const on = !set || set.has(n);
+    r.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : .12 });   // sin bringToFront: taparía las paradas
+  });
+}
 function elegir(p) {
   actual = p; filtro = null; marcadas = new Set();
+  resaltar(p.tipo === 'parada' ? p.lineas : null);
   if (marcaSel) map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 13, color: '#ff3b30', weight: 3, fill: false }).addTo(map);
   $('pn').textContent = p.nombre; $('ps').textContent = ''; $('lista').innerHTML = '';
@@ -305,7 +314,7 @@ function pintar(d, p) {
   });
   $('nota').textContent = ds.length > 1 ? 'Hay guaguas en los dos sentidos: elige el de tu destino.' : '';
 }
-$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); };
+$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); resaltar(null); };
 
 // ── Búsqueda y ubicación ──
 const cercana = (la, lo) => paradas.slice().sort((a, b) => Math.hypot(a.lat - la, (a.lon - lo) * .88) - Math.hypot(b.lat - la, (b.lon - lo) * .88))[0];

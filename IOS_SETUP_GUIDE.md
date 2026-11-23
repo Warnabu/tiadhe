@@ -31,7 +31,7 @@
 ```bash
 cd ~/Documents
 git clone https://github.com/Warnabu/tiadhe.git
-cd tiadhe/files/ios/GuaguasFTV
+cd tiadhe/ios/GuaguasFTV
 ```
 
 ### Opción B: Copiar carpeta manualmente
@@ -207,10 +207,7 @@ GuaguasFTV/
 Para testing local, puedes añadir en **Scheme → Edit Scheme → Run → Arguments → Environment Variables**:
 - `BASE_URL` = `http://192.168.1.78:5000` (tu IP local del servidor)
 
-Y cambiar en `APIClient.swift`:
-```swift
-let baseURL = ProcessInfo.processInfo.environment["BASE_URL"] ?? "https://guaguas-ftv.onrender.com"
-```
+`APIClient.swift` ya lee `BASE_URL`; si no está definida usa `https://tiadhe-backend.onrender.com`.
 
 ---
 
@@ -218,6 +215,6 @@ let baseURL = ProcessInfo.processInfo.environment["BASE_URL"] ?? "https://guagua
 
 Si tienes problemas, revisa:
 1. Logs de Xcode (panel inferior)
-2. Logs de Render (pestaña Logs)
+2. Logs de Render (pestaña Logs) — servicio `tiadhe-backend`
 3. Firebase Console → Authentication → Users (verifica que el usuario se creó)
 4. Firebase Console → Cloud Messaging → Send test message

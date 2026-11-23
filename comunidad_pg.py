@@ -65,7 +65,7 @@ def mensaje(metodo, ruta, ts, nonce, cuerpo):
     """Normalize body to compact JSON for consistent signing across Python/JS."""
     try:
         import json
-        cuerpo = json.dumps(json.loads(cuerpo), separators=(',', ':'))
+        cuerpo = json.dumps(json.loads(cuerpo), separators=(',', ':'), ensure_ascii=False)  # igual que JSON.stringify / iOS
     except Exception:
         pass
     return "\n".join([metodo, ruta, str(ts), nonce, cuerpo]).encode()

@@ -149,6 +149,16 @@ for i in range(3):
 COM._snap_ts = -1e9
 aprend = COM.aprendido(num, sent, var, p1["id"], off1)
 check(aprend is not None and off1 < aprend < off1 + 20, f"3 observaciones ({off1 + 20:.0f} min) + modelo ({off1:.0f} min) -> estimación mezclada {aprend:.1f} min")
+# --- cliente iOS: firma el texto exacto que envía (claves ordenadas, decimales, acentos sin escapar)
+G = Disp(9)
+texto_ios = '{"acc":65.0,"lat":28.123456,"lon":-14.2,"nota":"Pájara – Morro Jable","pub":"%s"}' % G.b64
+ts_g, nonce_g = str(epoch("10:15:00")), uuid.uuid4().hex
+r = c.open(f"/api/registro?hora={DIA}10:15:00", method="POST", data=texto_ios.encode(), environ_base={"REMOTE_ADDR": G.ip},
+           headers={"X-Ts": ts_g, "X-Nonce": nonce_g, "Content-Type": "application/json",
+                    "X-Firma": base64.b64encode(b"".join(x.to_bytes(32, "big") for x in decode_dss_signature(
+                        G.k.sign("\n".join(["POST", "/api/registro", ts_g, nonce_g, texto_ios]).encode(), ec.ECDSA(hashes.SHA256()))))).decode()})
+check(r.status_code == 200, f"firma de un cuerpo con acentos y decimales (cliente iOS): {r.status_code} {r.get_json()}")
+
 print(f"\n{ok} correctas, {fallos} fallos")
 # Clean up test database
 for f in ("comunidad_test.db", "comunidad_test.db-wal", "comunidad_test.db-shm"):

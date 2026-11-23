@@ -20,7 +20,8 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var userLocation: CLLocationCoordinate2D?
     @State private var showingSubidaConfirmation = false
-    @State private var pendingSubida: (Parada, Linea, String)?
+    @State private var pendingSubida: (Parada, Salida)?
+    @State private var infoMessage: String?
     @State private var isSubidaButtonEnabled = false
     @State private var subidaButtonCountdown = 0
     @State private var countdownTimer: Timer?
@@ -29,7 +30,7 @@ struct ContentView: View {
         ZStack {
             Map(coordinateRegion: $region,
                 showsUserLocation: true,
-                userTrackingMode: .constant(.follow),
+                userTrackingMode: .constant(.none),   // .follow bloqueaba el mapa en la posición del usuario
                 annotationItems: paradas) { parada in
                 MapAnnotation(coordinate: parada.coordinate) {
                     ParadaAnnotationView(parada: parada, isSelected: selectedParada?.id == parada.id) {
@@ -81,8 +82,9 @@ struct ContentView: View {
                 if let parada = selectedParada {
                     ParadaBottomSheet(parada: parada,
                                       lineas: lineas.filter { parada.lineas.contains($0.num) },
-                                      onSubida: { linea, viaje in
-                                          pendingSubida = (parada, linea, viaje)
+                                      onSubida: { salida in
+                                          guard authManager.isAuthenticated else { showingAuth = true; return }
+                                          pendingSubida = (parada, salida)
                                           showingSubidaConfirmation = true
                                       },
                                       onDismiss: { selectedParada = nil }
@@ -96,24 +98,27 @@ struct ContentView: View {
                 }
             }
         }
-        .alert("Error", isPresented: .constant(errorMessage != nil), actions: {
+        .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }), actions: {
             Button("OK") { errorMessage = nil }
         }, message: { Text(errorMessage ?? "") })
+        .alert("Guaguas FTV", isPresented: Binding(get: { infoMessage != nil }, set: { if !$0 { infoMessage = nil } }), actions: {
+            Button("OK") { infoMessage = nil }
+        }, message: { Text(infoMessage ?? "") })
         .sheet(isPresented: $showingAuth) {
             AuthView()
                 .environmentObject(authManager)
         }
         .alert("¿Confirmar subida?", isPresented: $showingSubidaConfirmation, actions: {
             Button("Cancelar", role: .cancel) { pendingSubida = nil }
-            Button("Confirmar", role: .destructive) {
-                if let (parada, linea, viaje) = pendingSubida {
-                    confirmarSubida(parada: parada, linea: linea, viaje: viaje)
+            Button("Me he subido") {
+                if let pendiente = pendingSubida {
+                    confirmarSubida(parada: pendiente.0, salida: pendiente.1)
                 }
                 pendingSubida = nil
             }
         }, message: {
-            if let (parada, linea, _) = pendingSubida {
-                Text("¿Confirmas que te subes a la línea \(linea.num) (\(linea.nombre)) en \(parada.nombre)?")
+            if let pendiente = pendingSubida {
+                Text("¿Te has subido a la línea \(pendiente.1.linea) de las \(pendiente.1.hora) en \(pendiente.0.nombre)? Cuando otras personas lo confirmen, la hora se actualizará para todos.")
             }
         })
         .onAppear {
@@ -168,7 +173,7 @@ struct ContentView: View {
         let userLocCL = CLLocation(latitude: userLoc.latitude, longitude: userLoc.longitude)
         let distance = userLocCL.distance(from: paradaLoc)
 
-        let enabled = distance <= 200 && authManager.isAuthenticated
+        let enabled = distance <= 200   // sin sesión se muestra la invitación a iniciarla
         updateSubidaButtonState(enabled: enabled)
     }
 
@@ -192,41 +197,14 @@ struct ContentView: View {
         }
     }
 
-    private func confirmarSubida(parada: Parada, linea: Linea, viaje: String) {
-        guard let userLoc = userLocation,
-              let authToken = authManager.internalToken else { return }
-
-        apiClient.setAuthToken(authToken)
-
-        let nonce = UUID().uuidString
-        let ts = Int(Date().timeIntervalSince1970)
-        let cuerpo = "\(nonce)\(ts)\(viaje)\(parada.id)"
-        let pubKey = "dummy_pubkey"
-
-        let request = SubidaRequest(
-            viaje: viaje,
-            parada: parada.id,
-            lat: userLoc.latitude,
-            lon: userLoc.longitude,
-            acc: locationManager.locationAccuracy > 0 ? locationManager.locationAccuracy : 50,
-            nonce: nonce,
-            sig: "dummy_signature",
-            pub: pubKey,
-            ts: ts
-        )
-
+    private func confirmarSubida(parada: Parada, salida: Salida) {
         Task {
             do {
-                let response = try await apiClient.enviarSubida(request)
-                DispatchQueue.main.async {
-                    if response.ok {
-                        self.errorMessage = response.mensaje
-                    }
-                }
+                let r = try await apiClient.enviarSubida(paradaId: parada.id, viaje: salida.viaje,
+                                                         ubicacion: locationManager.location)
+                await MainActor.run { self.infoMessage = r.mensaje }
             } catch {
-                DispatchQueue.main.async {
-                    self.errorMessage = error.localizedDescription
-                }
+                await MainActor.run { self.errorMessage = error.localizedDescription }
             }
         }
     }
@@ -257,11 +235,12 @@ struct ParadaAnnotationView: View {
 struct ParadaBottomSheet: View {
     let parada: Parada
     let lineas: [Linea]
-    let onSubida: (Linea, String) -> Void
+    let onSubida: (Salida) -> Void
     let onDismiss: () -> Void
 
-    @State private var predicciones: [TableroPrediccion] = []
+    @State private var tablero: TableroResponse?
     @State private var isLoading = true
+    @State private var error: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -269,7 +248,7 @@ struct ParadaBottomSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(parada.nombre)
                         .font(.headline)
-                    Text("Líneas: \(lineas.map { $0.num }.joined(separator: ", "))")
+                    Text("Líneas: \(parada.lineas.joined(separator: ", "))")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -282,59 +261,90 @@ struct ParadaBottomSheet: View {
             }
             .padding()
 
-            if isLoading {
+            if isLoading && tablero == nil {
                 ProgressView("Cargando horarios...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if predicciones.isEmpty {
-                Text("No hay guaguas programadas próximamente")
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else if let error {
+                Text(error)
                     .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 120)
                     .padding()
-            } else {
-                List(predicciones) { pred in
-                    HStack {
-                        Circle()
-                            .fill(Color(hex: lineas.first { $0.num == pred.linea }?.color ?? "007AFF"))
-                            .frame(width: 12, height: 12)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("L\(pred.linea) \(pred.sentido.capitalized) · \(pred.variante)")
-                                .font(.subheadline)
-                            Text(pred.llegada)
-                                .font(.title2).bold()
+            } else if let t = tablero, !t.grupos.isEmpty {
+                List {
+                    ForEach(t.grupos) { grupo in
+                        Section(header: Text("Hacia \(grupo.destino)")) {
+                            ForEach(grupo.salidas) { s in
+                                fila(s)
+                            }
                         }
-                        Spacer()
-                        Text(pred.prec.capitalized)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.2))
-                            .cornerRadius(8)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        let viaje = "\(pred.linea)|\(pred.sentido)|\(pred.variante)|\(pred.llegada)"
-                        onSubida(lineas.first { $0.num == pred.linea }!, viaje)
                     }
                 }
                 .listStyle(.plain)
-                .frame(maxHeight: 300)
+                .frame(maxHeight: 340)
+            } else {
+                Text("No hay guaguas programadas próximamente")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                    .padding()
             }
         }
         .background(Color(.systemBackground))
         .cornerRadius(16, corners: [.topLeft, .topRight])
         .shadow(radius: 10)
-        .task {
-            await cargarPredicciones()
+        .task(id: parada.id) {
+            // se refresca cada 30 s mientras la ficha está abierta (como la web)
+            while !Task.isCancelled {
+                await cargar()
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
         }
     }
 
-    private func cargarPredicciones() async {
+    @ViewBuilder
+    private func fila(_ s: Salida) -> some View {
+        HStack(spacing: 10) {
+            Text(s.linea)
+                .font(.caption).bold()
+                .foregroundColor(.white)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Color(hex: lineas.first { $0.num == s.linea }?.color ?? "0b6e99"))
+                .cornerRadius(6)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.texto).font(.body).bold()
+                if let nota = s.nota, !nota.isEmpty {
+                    Text(nota).font(.caption2).foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(s.hora).font(.subheadline).monospacedDigit()
+                Text(etiqueta(s)).font(.caption2).foregroundColor(s.prec == "confirmada" || s.prec == "vivo" ? .green : .secondary)
+            }
+            if s.subir {
+                Button("Me subí") { onSubida(s) }
+                    .font(.caption).buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func etiqueta(_ s: Salida) -> String {
+        switch s.prec {
+        case "confirmada", "vivo": return (s.n ?? 0) > 0 ? "confirmada por \(s.n!)" : "en vivo"
+        case "oficial": return "horario oficial"
+        case "aprox": return "aproximada"
+        default: return "estimada"
+        }
+    }
+
+    private func cargar() async {
         do {
-            let response = try await APIClient.shared.getTablero(paradaId: parada.id)
-            predicciones = response.predicciones
-            isLoading = false
+            let t = try await APIClient.shared.getTablero(paradaId: parada.id)
+            await MainActor.run { tablero = t; error = nil; isLoading = false }
         } catch {
-            isLoading = false
+            await MainActor.run {
+                if tablero == nil { self.error = "No se pudo cargar. Comprueba tu conexión." }
+                isLoading = false
+            }
         }
     }
 }
@@ -439,34 +449,7 @@ struct AuthView: View {
     }
 
     private func signInWithApple() {
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        request.requestedScopes = [.fullName, .email]
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = AppleSignInDelegate(authManager: authManager)
-        controller.presentationContextProvider = AppleSignInDelegate(authManager: authManager)
-        controller.performRequests()
-    }
-}
-
-class AppleSignInDelegate: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    let authManager: AuthManager
-
-    init(authManager: AuthManager) {
-        self.authManager = authManager
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-        if let appleCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
-            authManager.signInWithApple(credential: appleCredential)
-        }
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        authManager.errorMessage = error.localizedDescription
-    }
-
-    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        UIApplication.shared.windows.first { $0.isKeyWindow } ?? UIWindow()
+        authManager.iniciarAppleSignIn()
     }
 }
 

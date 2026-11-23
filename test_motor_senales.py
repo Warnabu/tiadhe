@@ -22,6 +22,19 @@ from edge_cases import ManejadorEdgeCases, TipoEdgeCase
 from api_sube import ServicioSubida
 
 
+def punto_ruta(trazado, adelante_m=0):
+    """Punto del trazado junto a la parada 10 de la línea 01 (o adelante_m metros más allá por el recorrido).
+    Se calcula por distancia y no con un índice fijo, que cambia cada vez que se regeneran los trazados."""
+    _, base = cargar()
+    p10 = sorted(base['01']['paradas'], key=lambda p: p['k'])[10]
+    i = min(range(len(trazado)), key=lambda j: haversine(trazado[j][0], trazado[j][1], p10['lat'], p10['lon']))
+    recorrido = 0.0
+    while i + 1 < len(trazado) and recorrido < adelante_m:
+        recorrido += haversine(trazado[i][0], trazado[i][1], trazado[i + 1][0], trazado[i + 1][1])
+        i += 1
+    return trazado[i]
+
+
 def crear_datos_prueba():
     """Crea datos de prueba usando línea 01 real"""
     HORARIOS, BASE = cargar()
@@ -92,7 +105,7 @@ def test_motor_senales():
         id='test_02',
         gps_activo=True,
         posiciones=[PosicionGPS(
-            lat=linea.trazado[86][0], lon=linea.trazado[86][1],
+            lat=punto_ruta(linea.trazado)[0], lon=punto_ruta(linea.trazado)[1],
             timestamp=int(time.time()), accuracy=15, speed=30/3.6, heading=90
         )],
     )
@@ -147,9 +160,11 @@ def test_boton_subir():
     assert intencion.estado == EstadoBoton.PULSADO
     print(f"OK Intención creada: {intencion.id}")
     
-    # Monitor: usuario se mueve en ruta a velocidad bus (punto cerca parada 10)
+    # Monitor: usuario se mueve en ruta a velocidad bus (el punto del trazado más cercano a la parada,
+    # no un índice fijo: el índice cambia cada vez que se regeneran los trazados)
+    cerca = min(linea.trazado, key=lambda q: haversine(q[0], q[1], parada.lat, parada.lon))
     usuario.posiciones.append(PosicionGPS(
-        lat=linea.trazado[86][0], lon=linea.trazado[86][1],
+        lat=cerca[0], lon=cerca[1],
         timestamp=int(time.time()) + 10, accuracy=15, speed=30/3.6, heading=90
     ))
     
@@ -203,7 +218,7 @@ def test_inferencia_colectiva():
     
     # Usuario 0 se sube (se mueve en ruta) - punto cerca parada 10
     usuarios['user_0'].posiciones.append(PosicionGPS(
-        lat=linea.trazado[86][0], lon=linea.trazado[86][1],
+        lat=punto_ruta(linea.trazado)[0], lon=punto_ruta(linea.trazado)[1],
         timestamp=int(time.time()) + 60, accuracy=15, speed=30/3.6, heading=90
     ))
     intenciones['int_user_0'].estado = EstadoBoton.CONFIRMADO
@@ -211,7 +226,7 @@ def test_inferencia_colectiva():
     
     # Usuario 1 se sube - punto más adelante
     usuarios['user_1'].posiciones.append(PosicionGPS(
-        lat=linea.trazado[120][0], lon=linea.trazado[120][1],
+        lat=punto_ruta(linea.trazado, 800)[0], lon=punto_ruta(linea.trazado, 800)[1],
         timestamp=int(time.time()) + 70, accuracy=15, speed=30/3.6, heading=90
     ))
     intenciones['int_user_1'].estado = EstadoBoton.CONFIRMADO
@@ -287,13 +302,21 @@ def test_edge_cases():
     
     manejador = ManejadorEdgeCases()
     
-    # Test GPS callejón - posición cerca de parada pero fuera de ruta (callejón)
-    # Offset (0, 0.0003): ~29m de parada, ~54m de trazado
+    # Test GPS callejón - posición cerca de la parada pero fuera de la ruta (un callejón al lado).
+    # Se busca un punto a ~30-45 m de la parada que quede fuera del trazado (depende de por dónde vaya la calle).
+    import math
+    from prototipo_sube import punto_en_trazado
+    lat_c, lon_c = next((parada.lat + r / 111320 * math.cos(math.radians(a)),
+                         parada.lon + r / (111320 * math.cos(math.radians(parada.lat))) * math.sin(math.radians(a)))
+                        for r in (30, 35, 40, 45) for a in range(0, 360, 15)
+                        if not punto_en_trazado(parada.lat + r / 111320 * math.cos(math.radians(a)),
+                                                parada.lon + r / (111320 * math.cos(math.radians(parada.lat))) * math.sin(math.radians(a)),
+                                                linea.trazado)[0])
     usuario = UsuarioContexto(
         id='test_ec',
         gps_activo=True,
         posiciones=[PosicionGPS(
-            lat=parada.lat + 0.0, lon=parada.lon + 0.0003,
+            lat=lat_c, lon=lon_c,
             timestamp=int(time.time()), accuracy=50, speed=0, heading=None
         )],
         consulto_app_recientemente=False,
@@ -400,13 +423,13 @@ def test_servicio_integrado():
     assert resp_int.estado == 'pulsado'
     print(f"OK Intención registrada: {resp_int.intencion_id}")
     
-    # Actualizar ubicación (simular subida) - usar punto de trazado cerca de la parada (índice 86)
+    # Actualizar ubicación (simular subida) - usar el punto del trazado junto a la parada
     linea_test = servicio.lineas_cache['01']
     req_ub = {
         'usuario_id': 'user_integ',
         'intencion_id': resp_int.intencion_id,
-        'lat': linea_test.trazado[86][0],
-        'lon': linea_test.trazado[86][1],
+        'lat': punto_ruta(linea_test.trazado)[0],
+        'lon': punto_ruta(linea_test.trazado)[1],
         'accuracy': 15,
         'speed': 30/3.6,
         'heading': 90,
