@@ -1,14 +1,10 @@
+# Lo que necesita el servidor en producción (Render instala solo esto).
 flask>=3.0
-fastapi>=0.109
-uvicorn>=0.27
-pydantic>=2.5
+gunicorn>=21.0
 requests
-folium
 holidays
 tzdata
 cryptography>=41.0
-gunicorn>=21.0
 psycopg2-binary>=2.9
 firebase-admin>=6.5
 PyJWT>=2.8
-# force rebuild 2026-11-21

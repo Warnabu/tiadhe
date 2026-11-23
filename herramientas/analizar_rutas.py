@@ -3,7 +3,7 @@
 import json, math
 from pathlib import Path
 
-DATOS = Path(__file__).parent / "datos"
+DATOS = Path(__file__).resolve().parent.parent / "datos"
 
 def km(a, b):
     p = math.pi / 180

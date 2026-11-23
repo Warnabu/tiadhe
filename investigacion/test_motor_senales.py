@@ -7,12 +7,13 @@ eta_dinamico, edge_cases y api_sube funcionan correctamente.
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))                   # módulos de investigación
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # paquete app
 
 import time
 from prototipo_sube import Parada, Linea, PosicionGPS, haversine
-from guaguas import cargar
-from servidor import agrupar
+from app.guaguas import cargar
+from app.servidor import agrupar
 from motor_senales import UsuarioContexto, MotorSenales
 from boton_subir import ValidadorBoton, MonitorIntencion, EstadoBoton
 from inferencia_colectiva import MotorInferenciaColectiva, EstadoColectivo
@@ -361,7 +362,7 @@ def test_servicio_integrado():
     import tempfile
     import os
     from zoneinfo import ZoneInfo
-    from comunidad import Comunidad
+    from comunidad_sqlite import Comunidad
     tmp_db = tempfile.mktemp(suffix='.db')
     ids_cluster = {'test': {'01:10'}}
     centros = {'test': (28.5, -13.86)}
@@ -386,7 +387,7 @@ def test_servicio_integrado():
     servicio._registrar_subida_comunidad = lambda *args, **kwargs: None
     
     # Crear datos de prueba mínimos
-    from guaguas import cargar
+    from app.guaguas import cargar
     from prototipo_sube import Parada, Linea, PosicionGPS
     HORARIOS, BASE = cargar()
     l01 = BASE['01']

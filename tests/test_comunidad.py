@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Pruebas de la comunidad: firmas, consenso, plausibilidad, reputación y aprendizaje.  python test.py"""
+"""Pruebas de la comunidad: firmas, consenso, plausibilidad, reputación y aprendizaje.
+
+    python tests/test_comunidad.py
+"""
 import base64, os, sys, uuid
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RAIZ)
 os.environ["GUAGUAS_DEBUG"] = "1"
 from datetime import datetime
 from cryptography.hazmat.primitives import hashes
@@ -10,15 +15,15 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 # Importante: borrar la BD ANTES de importar servidor, porque servidor.Comunidad() la abre al cargar.
 for f in ("comunidad.db", "comunidad.db-wal", "comunidad.db-shm"):
-    p = os.path.join(os.path.dirname(__file__) or ".", "datos", f)
+    p = os.path.join(RAIZ, "datos", f)
     try:
         if os.path.exists(p):
             os.remove(p)
     except PermissionError:
         pass  # en Windows puede estar bloqueado por otra ejecución en curso
-import servidor as s
-from comunidad_pg import Comunidad, mensaje, Error
-import postgresql_db as pg
+from app import servidor as s
+from app.comunidad import Comunidad, mensaje, Error
+from app import db as pg
 
 # Clear database tables for clean test run
 for table in ("subidas", "observaciones", "nonces", "dispositivos", "registros", "ubicaciones_activas"):
@@ -162,7 +167,7 @@ check(r.status_code == 200, f"firma de un cuerpo con acentos y decimales (client
 print(f"\n{ok} correctas, {fallos} fallos")
 # Clean up test database
 for f in ("comunidad_test.db", "comunidad_test.db-wal", "comunidad_test.db-shm"):
-    p = os.path.join(os.path.dirname(__file__) or ".", "datos", f)
+    p = os.path.join(RAIZ, "datos", f)
     try:
         if os.path.exists(p): os.remove(p)
     except PermissionError:

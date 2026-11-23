@@ -21,8 +21,8 @@ import json
 import uuid
 
 from prototipo_sube import Linea, Parada, PosicionGPS, haversine
-from guaguas import cargar
-from servidor import agrupar
+from app.guaguas import cargar
+from app.servidor import agrupar
 from motor_senales import UsuarioContexto, MotorSenales
 from boton_subir import (ValidadorBoton, MonitorIntencion, IntencionSubida, 
                           EstadoBoton)
@@ -30,10 +30,10 @@ from inferencia_colectiva import (MotorInferenciaColectiva, SesionInferencia,
                                    EstadoColectivo)
 from eta_dinamico import (MotorETADinamico, OrigenETA, ObservacionETA)
 from edge_cases import (ManejadorEdgeCases, TipoEdgeCase)
-from comunidad import Comunidad
+from comunidad_sqlite import Comunidad
 from edge_cases import (ManejadorEdgeCases, evaluar_edge_cases, aplicar_edge_cases,
                          TipoEdgeCase)
-from comunidad import Comunidad
+from comunidad_sqlite import Comunidad
 
 
 # === Modelos de Request/Response ===

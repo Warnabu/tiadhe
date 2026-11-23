@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """Web de guaguas de Fuerteventura (Guaguas FTV).
 
-    python servidor.py          # http://127.0.0.1:5000
+    python servidor.py          # http://127.0.0.1:5000  (servidor.py de la raíz es el punto de entrada)
 En producción:  gunicorn -w 2 servidor:app   (detrás de nginx con HTTPS)
 Pruebas: GUAGUAS_DEBUG=1 permite ?hora=2026-09-24T10:05 en las consultas.
 """
 import base64, hashlib, json, logging, math, os, time, jwt
 from collections import Counter
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 
-from comunidad_pg import Comunidad, Error, km_ll, mensaje
+from .comunidad import Comunidad, Error, km_ll, mensaje
 
-import bandas
-import guaguas as g
-import postgresql_db as pg_db
+from . import bandas
+from . import guaguas as g
+from . import db as pg_db
 
 try:
     import firebase_admin
@@ -30,7 +31,8 @@ if not hasattr(g, "nombre_destino"):
 
 TZ = ZoneInfo("Atlantic/Canary")
 DEBUG = bool(os.environ.get("GUAGUAS_DEBUG"))
-app = Flask(__name__, static_folder="web", static_url_path="")
+RAIZ = Path(__file__).resolve().parent.parent
+app = Flask(__name__, static_folder=str(RAIZ / "web"), static_url_path="")
 HORARIOS, BASE = g.cargar()
 _osm = g.DATOS / "paradas_osm.json"
 OSM = [p for p in json.loads(_osm.read_text(encoding="utf-8")) if p["nombre"]] if _osm.exists() else []
@@ -359,7 +361,7 @@ def api_parada(pid):
 def api_debug_pool():
     if not DEBUG:
         raise Error("no encontrado", 404)
-    import postgresql_db as pg
+    pg = pg_db
     return jsonify(
         use_postgres=pg.USE_POSTGRES,
         pool_min=pg.POOL.minconn if pg.POOL else None,

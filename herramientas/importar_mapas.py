@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """Importa las PARADAS REALES de los mapas de Google de Guaguas FTV (uno por línea).
 
-    python importar_mapas.py                       # todas las líneas (descarga de tiadhe.com)
-    python importar_mapas.py 12 01                 # solo esas líneas
-    python importar_mapas.py --mid 01=1cPK1PhZdYUCRRMaxQGcglNZIybFh1mo
-    python importar_mapas.py --kml 01=linea01.kml  # KML/KMZ descargado a mano (recomendado si la descarga falla)
+    python herramientas/importar_mapas.py                       # todas las líneas (descarga de tiadhe.com)
+    python herramientas/importar_mapas.py 12 01                 # solo esas líneas
+    python herramientas/importar_mapas.py --mid 01=1cPK1PhZdYUCRRMaxQGcglNZIybFh1mo
+    python herramientas/importar_mapas.py --kml 01=linea01.kml  # KML/KMZ descargado a mano (recomendado si la descarga falla)
 
 KML de un mapa:  https://www.google.com/maps/d/kml?mid=<ID>&forcekml=1
 
 Cada línea se VALIDA: si el mapa no encaja (trazado incompleto, ramas, paradas lejos del trazado)
 la línea se guarda como no válida y la app sigue usando el esqueleto aproximado, avisando.
-Resultado: datos/paradas_reales.json
+Resultado: datos/trazados_originales.json (tal cual los mapas). Después hay que ejecutar
+herramientas/ajustar_rutas.py, que los pega a las calles reales y escribe datos/paradas_reales.json.
 """
 import io, json, math, re, sys, zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DATOS = Path(__file__).parent / "datos"
+DATOS = Path(__file__).resolve().parent.parent / "datos"
 UA = {"User-Agent": "Mozilla/5.0 guaguas-fuerteventura"}
 LINEAS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "14", "15", "16", "18", "25", "111"]
 KML = "https://www.google.com/maps/d/kml?mid={}&forcekml=1"
@@ -197,6 +198,12 @@ def construir(paradas, trazados, origen=None):
 
 
 def main(args):
+    if any(a in ("-h", "--help") for a in args):
+        print(__doc__)
+        return
+    desconocidas = [a for a in args if a.startswith("-") and a not in ("--mid", "--kml")]
+    if desconocidas:
+        raise SystemExit(f"Opción desconocida: {desconocidas[0]} (usa --help)")
     manual, kmls, lineas, i = {}, {}, [], 0
     while i < len(args):
         if args[i] in ("--mid", "--kml"):
@@ -207,7 +214,7 @@ def main(args):
             lineas.append(args[i]); i += 1
     lineas = lineas or sorted(set(manual) | set(kmls)) or LINEAS
     base = json.loads((DATOS / "lineas_base.json").read_text(encoding="utf-8"))["lineas"]
-    p_out = DATOS / "paradas_reales.json"
+    p_out = DATOS / "trazados_originales.json"
     salida = json.loads(p_out.read_text(encoding="utf-8")) if p_out.exists() else {}
     for num in lineas:
         try:
@@ -233,6 +240,7 @@ def main(args):
             print(f"L{num}: error: {e}")
     p_out.write_text(json.dumps(salida, ensure_ascii=False), encoding="utf-8")
     print("Guardado", p_out)
+    print("Ahora ejecuta: python herramientas/ajustar_rutas.py")
 
 
 if __name__ == "__main__":

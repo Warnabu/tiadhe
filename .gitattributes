@@ -1,0 +1,4 @@
+# Finales de línea normalizados (LF en el repo) aunque se edite desde Windows
+* text=auto eol=lf
+*.png binary
+*.jpg binary

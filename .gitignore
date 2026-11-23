@@ -1,12 +1,29 @@
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Bases de datos locales y temporales
 datos/*.db
 datos/*.db-*
-.env
 *.json.bak
-/etc/
-guaguas-ftv1-*.json
 
+# Cachés de descargas (se regeneran solas)
 datos/.cache_osrm/
 datos/paradas_reales.original.json
 datos/preview_ajuste.geojson
+mapa_fuerteventura.html
+
+# Secretos: nunca al repo
+.env
+/etc/
+guaguas-ftv1-*.json
+GoogleService-Info.plist
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

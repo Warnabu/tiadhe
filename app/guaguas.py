@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Guaguas de Fuerteventura (Guaguas FTV): ¿qué guagua pasa por mi parada?
 
-    python guaguas.py                       # modo interactivo
-    python guaguas.py -p "Las Playitas"     # consulta directa
-    python guaguas.py -p "Antigua" --mapa   # además abre el mapa de la isla
-    python guaguas.py --actualizar-osm      # vuelve a descargar las paradas de OpenStreetMap
-    python guaguas.py -p X --hora "2026-09-25 10:15"   # simular otra fecha/hora
+    python -m app.guaguas                       # modo interactivo
+    python -m app.guaguas -p "Las Playitas"     # consulta directa
+    python -m app.guaguas -p "Antigua" --mapa   # además abre el mapa de la isla
+    python -m app.guaguas --actualizar-osm      # vuelve a descargar las paradas de OpenStreetMap
+    python -m app.guaguas -p X --hora "2026-09-25 10:15"   # simular otra fecha/hora
 
 Datos (carpeta datos/): horarios.json, lineas_base.json (esqueleto aproximado + duraciones),
-paradas_reales.json (importar_mapas.py), paradas_osm.json (caché de OpenStreetMap).
+paradas_reales.json (herramientas/ajustar_rutas.py), paradas_osm.json (caché de OpenStreetMap).
 """
 import argparse, json, math, re, unicodedata, webbrowser
 from datetime import datetime, timedelta
@@ -21,7 +21,7 @@ try:
 except ImportError:
     FESTIVOS = {}
 
-DATOS = Path(__file__).parent / "datos"
+DATOS = Path(__file__).resolve().parent.parent / "datos"
 OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]
 BBOX = "28.03,-14.60,28.80,-13.80"
 FACTOR_CARRETERA, MIN_POR_PARADA, RADIO_OSM_KM = 1.3, 0.7, 1.5

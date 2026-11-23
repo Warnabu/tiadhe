@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Pinta las rutas sobre las calles reales: ajusta ("map matching") el trazado original de cada línea a la red viaria.
 
-    python ajustar_rutas.py              # todas las líneas → datos/paradas_reales.json
-    python ajustar_rutas.py 05 12        # solo esas
-    python ajustar_rutas.py --dry-run    # informa sin escribir
+    python herramientas/ajustar_rutas.py              # todas las líneas → datos/paradas_reales.json
+    python herramientas/ajustar_rutas.py 05 12        # solo esas
+    python herramientas/ajustar_rutas.py --dry-run    # informa sin escribir
 
 Entrada fija: datos/trazados_originales.json (los trazados y paradas tal como vienen de los mapas de Google de
 Tiadhe, ver importar_mapas.py). El script siempre parte de ahí, así que se puede repetir sin acumular cambios.
@@ -27,7 +27,7 @@ Cómo funciona (modelo oculto de Markov, el método estándar para pegar un GPS 
 import argparse, heapq, json, math, os, sys, time
 from pathlib import Path
 
-DATOS = Path(__file__).parent / "datos"
+DATOS = Path(__file__).resolve().parent.parent / "datos"
 RED = DATOS / ".cache_osrm" / "red"
 ORIGINALES = DATOS / "trazados_originales.json"
 SERVIDOR = "https://router.project-osrm.org"

@@ -15,7 +15,7 @@ import statistics
 from enum import Enum
 
 from prototipo_sube import Linea, Parada
-from comunidad import Comunidad
+from comunidad_sqlite import Comunidad
 from motor_senales import UsuarioContexto, MotorSenales
 
 

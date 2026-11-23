@@ -3,6 +3,7 @@ Replaces SQLite with asyncpg/psycopg2 for production on Render + Supabase.
 Supports local testing with SQLite fallback when DATABASE_URL not set.
 """
 import os
+from pathlib import Path
 import sqlite3
 import threading
 import time
@@ -169,7 +170,7 @@ def _get_sqlite_db():
     global _SQLITE_DB
     with _SQLITE_LOCK:
         if _SQLITE_DB is None:
-            db_path = os.environ.get("SQLITE_DB_PATH", "datos/comunidad_test.db")
+            db_path = os.environ.get("SQLITE_DB_PATH", str(Path(__file__).resolve().parent.parent / "datos" / "comunidad_test.db"))
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             _SQLITE_DB = sqlite3.connect(db_path, check_same_thread=False, timeout=10)
             _SQLITE_DB.row_factory = sqlite3.Row

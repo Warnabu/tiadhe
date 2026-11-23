@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Regresiones de producción (Render + Supabase). Ejecutar contra PostgreSQL REAL:
-    DATABASE_URL=postgresql://... python test_produccion.py
+    DATABASE_URL=postgresql://... python tests/test_produccion.py
 Sin DATABASE_URL usa SQLite local. Cubre fallos que SQLite NO detecta."""
 import base64, json, os, sys, time, uuid
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RAIZ)
 os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
 os.environ["RENDER"] = "true"; os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ["MAX_REGISTROS_IP"] = "5"
@@ -11,9 +13,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-import servidor as s
-import postgresql_db as pg
-from comunidad_pg import Comunidad, mensaje
+from app import servidor as s
+from app import db as pg
+from app.comunidad import Comunidad, mensaje
 
 for t in ("subidas", "observaciones", "nonces", "dispositivos", "registros", "ubicaciones_activas"):
     pg.execute(f"DELETE FROM {t}")

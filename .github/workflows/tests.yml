@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      ALLOW_SQLITE_FALLBACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Comunidad (firmas, consenso, reputación)
+        run: python tests/test_comunidad.py
+      - name: Regresiones de producción (con SQLite)
+        run: python tests/test_produccion.py
+      - name: Prototipo de detección de subida
+        run: python investigacion/test_motor_senales.py
+      - name: El servidor arranca como en Render
+        run: python -c "import servidor; print(len(servidor.PARADAS), 'paradas')"

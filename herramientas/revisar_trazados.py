@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Revisa datos/paradas_reales.json y señala los trazados sospechosos.
 
-    python revisar_trazados.py
+    python herramientas/revisar_trazados.py
 
 Para cada línea informa de:
   · tramos largos  (segmento > 400 m: casi seguro una curva cortada en diagonal)
@@ -12,7 +12,7 @@ Es de solo lectura: no modifica nada.
 import json, math
 from pathlib import Path
 
-DATOS = Path(__file__).parent / "datos"
+DATOS = Path(__file__).resolve().parent.parent / "datos"
 
 
 def km(a, b):

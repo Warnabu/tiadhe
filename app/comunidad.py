@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-import postgresql_db as pg
+from . import db as pg
 
 TZ = ZoneInfo("Atlantic/Canary")
 USE_POSTGRES = pg.USE_POSTGRES
