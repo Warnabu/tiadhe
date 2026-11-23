@@ -14,12 +14,14 @@ da siempre un recorrido por carretera. El trazado original solo se usa como GUÍ
   2. Cada tramo entre dos paradas se compara con el trazado original (longitud y distancia media). Si se
      desvía, se repite con puntos de paso tomados del original y se queda el candidato que mejor encaja.
   3. Las ROTONDAS se recorren por su carril (el anillo de OpenStreetMap), no con los octógonos del mapa original.
-  4. Se quitan los bucles cortos que no llevan a ninguna parada (vueltas a una manzana para cambiar de sentido).
+  4. Bucles cortos (vueltas a una manzana o rotonda, idas y vueltas) y rodeos para llegar a una parada por el otro
+     lado: se conservan si el trazado original también va hasta allí (cambio de sentido real); si no, se quitan.
   5. Cada parada se coloca en la marquesina de OpenStreetMap más cercana (≤40 m) o, si no hay, sobre la vía.
      Las que están a >120 m del recorrido y sin marquesina (desvíos o datos dudosos) se dejan donde están y se
      avisa. A todas se les recalcula 'k' (km desde el origen) sobre el trazado nuevo: el servidor lo usa para los tiempos.
-  6. Si la ruta se aleja >100 m del original con las dos paradas sobre él (o una parada queda a >60 m de toda vía),
-     falta esa calle en OpenStreetMap: ese tramo conserva el dibujo original.
+  6. Si la ruta calculada da un rodeo que el original no tiene (sentidos únicos o giros prohibidos en OpenStreetMap)
+     y el original de ese tramo va por calles reales (comprobado con las teselas de calles de OSRM), se conserva
+     el original. Igual si falta la calle en OpenStreetMap (la ruta se aleja >100 m con las dos paradas sobre él).
      Por defecto 'k' se reescala a la longitud del trazado original (km_escala) para no cambiar la duración total
      de cada línea; solo cambia el reparto entre paradas. Con --km-reales se usan los km reales por carretera.
      El script es repetible: guarda km_escala y vuelve a partir de los datos ya reconstruidos sin perder la escala.
@@ -36,7 +38,9 @@ MAX_WP = 60               # puntos por petición /route
 RADIO_SNAP = 120          # m: distancia máxima a la que una parada se engancha a la vía
 OSM_MARQUESINA = 0.040    # km: si hay una parada de OSM así de cerca, se usa su posición
 LEJOS_GUIA = 0.120        # km: parada más lejos del trazado original (y sin marquesina OSM) = mal situada
-ACEPTA = 120              # puntuación máxima de un tramo (m de separación media + 400 por km de rodeo)
+ACEPTA = 30               # puntuación a partir de la cual un tramo se repite con puntos de paso (m + 300/km de rodeo)
+AVISO = 60                # a partir de aquí se avisa del tramo como dudoso
+ORIGINAL_SI = 40          # si la mejor ruta puntúa peor que esto y el original va por calles, se usa el original
 _ultima = [0.0]
 
 
@@ -179,11 +183,14 @@ def geometria_tramo(leg):
     return out, set()
 
 
-def quitar_pinchos(t, protegidos, max_km=0.35):
-    """Quita bucles cortos (el recorrido vuelve a pasar a <12 m del mismo punto tras ≤max_km) que no llevan a
-    ninguna parada: vueltas a una manzana o a una rotonda para cambiar de sentido, idas y vueltas… Los bucles con
-    una parada dentro se dejan como están (por la calle): cortarlos dibujaría rectas a través de las manzanas."""
+def quitar_pinchos(t, protegidos, guia=None, max_km=0.6):
+    """Bucles cortos: el recorrido vuelve a pasar a <12 m del mismo punto tras ≤max_km (vuelta a una manzana o a
+    una rotonda, ida y vuelta por una calle). Se conservan si llevan a una parada o si el trazado original también
+    llega hasta su punto más lejano (es un cambio de sentido de verdad, p. ej. la rotonda de Lajares en la 08);
+    si no, son un rodeo inventado por el enrutador y se quitan."""
     protegidos = list(protegidos)
+    acc_g = acumulado(guia) if guia else None
+    revisados = set()
     cambiado = True
     while cambiado:
         cambiado = False
@@ -192,9 +199,15 @@ def quitar_pinchos(t, protegidos, max_km=0.35):
             for j in range(i + 2, len(t)):
                 if acc[j] - acc[i] > max_km:
                     break
-                if km(t[i], t[j]) >= 0.012:
+                if km(t[i], t[j]) >= 0.012 or (t[i], t[j]) in revisados:
                     continue
                 if any(i < p < j for p in protegidos):
+                    continue
+                lejos = max(t[i + 1:j], key=lambda q: km(q, t[i]))
+                if km(lejos, t[i]) < 0.015:
+                    pass  # zigzag de unos metros: fuera
+                elif guia and proyectar(guia, acc_g, lejos)[0] < 0.035:
+                    revisados.add((t[i], t[j]))  # el original también va hasta allí: cambio de sentido real
                     continue
                 quitados = j - i - 1
                 protegidos = [p if p <= i else p - quitados for p in protegidos]
@@ -204,6 +217,109 @@ def quitar_pinchos(t, protegidos, max_km=0.35):
             if cambiado:
                 break
     return t, protegidos
+
+
+# ------------------------------------------------------------------ calles (teselas vectoriales de OSRM)
+_teselas = {}
+
+
+def calles_tesela(servidor, x, y, z=15):
+    """Segmentos de calle [(a, b)] de una tesela vectorial de OSRM (cacheados en disco)."""
+    if (x, y) in _teselas:
+        return _teselas[(x, y)]
+    f = CACHE / "teselas" / f"{z}_{x}_{y}.json"
+    if f.exists():
+        segs = json.loads(f.read_text())
+    else:
+        import requests
+        import mapbox_vector_tile as mvt
+        r = None
+        for intento in range(5):
+            espera = 1.05 - (time.time() - _ultima[0])
+            if espera > 0:
+                time.sleep(espera)
+            _ultima[0] = time.time()
+            try:
+                r = requests.get(f"{servidor}/tile/v1/driving/tile({x},{y},{z}).mvt", timeout=60,
+                                 headers={"User-Agent": "guaguas-fuerteventura"})
+                break
+            except Exception:
+                time.sleep(3 * (intento + 1))
+        segs = []
+        if r is not None and r.ok and r.content:
+            n = 2 ** z
+            d = mvt.decode(r.content, default_options={"y_coord_down": True})
+            for ft in d.get("speeds", {}).get("features", []):
+                g = ft["geometry"]
+                for linea in ([g["coordinates"]] if g["type"] == "LineString" else g["coordinates"]):
+                    pts = [(math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + py / 4096) / n)))),
+                            (x + px / 4096) / n * 360 - 180) for px, py in linea]
+                    segs += [[list(a), list(b)] for a, b in zip(pts, pts[1:])]
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(segs))
+    _teselas[(x, y)] = segs
+    return segs
+
+
+def fraccion_en_calles(t, servidor, tol_m=15, paso=0.02):
+    """Qué parte de la polilínea t va por calles reales (a ≤tol_m de una vía de OpenStreetMap). None si no se puede."""
+    try:
+        import mapbox_vector_tile  # noqa: F401  (opcional: pip install mapbox-vector-tile)
+    except ImportError:
+        return None
+    acc = acumulado(t)
+    if acc[-1] == 0:
+        return None
+    n = max(2, int(acc[-1] / paso))
+    dentro = 0
+    for i in range(n + 1):
+        p = punto_en(t, acc, acc[-1] * i / n)
+        z = 15
+        x = int((p[1] + 180) / 360 * 2 ** z)
+        y = int((1 - math.asinh(math.tan(math.radians(p[0]))) / math.pi) / 2 * 2 ** z)
+        segs = calles_tesela(servidor, x, y, z)
+        c = math.cos(math.radians(p[0]))
+        mejor = 1e9
+        for (la1, lo1), (la2, lo2) in segs:
+            ax, ay, bx, by = (lo1 - p[1]) * c * 111320, (la1 - p[0]) * 110540, (lo2 - p[1]) * c * 111320, (la2 - p[0]) * 110540
+            dx, dy = bx - ax, by - ay
+            L = dx * dx + dy * dy
+            u = 0 if L == 0 else max(0, min(1, -(ax * dx + ay * dy) / L))
+            mejor = min(mejor, math.hypot(ax + u * dx, ay + u * dy))
+            if mejor <= tol_m:
+                break
+        dentro += mejor <= tol_m
+    return dentro / (n + 1)
+
+
+def recortar_vueltas(g, a, b, guia, acc_g, cerca=0.03, min_km=0.15, max_km=1.0):
+    """Tramo que pasa junto a su parada final (o vuelve junto a la inicial) y da un rodeo para llegar a ella por
+    el otro lado: se recorta el rodeo, salvo que el original también vaya hasta allí (cambio de sentido real)."""
+    if len(g) < 3:
+        return g
+    acc = acumulado(g)
+    def real(trozo):
+        # el original también hace ese recorrido: al menos el 75 % del rodeo va a <30 m de él
+        ac = acumulado(trozo)
+        if ac[-1] == 0:
+            return False
+        n = max(2, int(ac[-1] / 0.02))
+        cerca_g = sum(proyectar(guia, acc_g, punto_en(trozo, ac, ac[-1] * k / n))[0] < 0.03 for k in range(n + 1))
+        return cerca_g >= 0.75 * (n + 1)
+    # llegada: primera vez que pasa junto a b con todavía un rodeo por delante
+    for i in range(1, len(g) - 1):
+        if km(g[i], b) < cerca and min_km < acc[-1] - acc[i] <= max_km:
+            if not real(g[i:]):
+                g = g[:i + 1] + [b]
+            break
+    acc = acumulado(g)
+    # salida: última vez que vuelve junto a a después de un rodeo
+    for j in range(len(g) - 2, 0, -1):
+        if km(g[j], a) < cerca and min_km < acc[j] <= max_km:
+            if not real(g[:j + 1]):
+                g = [a] + g[j:]
+            break
+    return g
 
 
 # ------------------------------------------------------------------ línea
@@ -225,10 +341,13 @@ def subtrazo(t, acc, k0, k1):
 
 
 def puntuar(guia, cand_pts, cand_len):
+    """(puntuación, separación media en m, km de rodeo). La separación se mide en LOS DOS sentidos: el original
+    respecto a la ruta y la ruta respecto al original, para que un rodeo que se aleja (vuelta a una manzana para
+    llegar a una parada) cuente aunque el original quede cubierto."""
     Lg = longitud(guia)
-    dm = distancia_media(guia, cand_pts)
-    exceso = max(0.0, cand_len - 1.25 * Lg - 0.15)  # km de más respecto al original
-    return dm + 400 * exceso, dm, exceso
+    dm = (distancia_media(guia, cand_pts) + distancia_media(cand_pts, guia)) / 2
+    exceso = max(0.0, cand_len - 1.10 * Lg - 0.05)  # km de más respecto al original
+    return dm + 300 * exceso, dm, exceso
 
 
 def ruta_tramo(servidor, a, b, guia_ab, rumbos_ab):
@@ -290,7 +409,8 @@ def reconstruir(num, linea, osm, servidor, log):
         s = (p["lat"], p["lon"])
         o = min(osm, key=lambda q: km(s, q), default=None)
         dg = proyectar(guia, acc, s)[0]
-        if o and km(s, o) <= OSM_MARQUESINA:
+        if o and km(s, o) <= OSM_MARQUESINA and proyectar(guia, acc, o)[0] <= dg + 0.010:
+            # la marquesina de OSM, salvo que esté en otra calle (más lejos del recorrido que la parada original)
             p["_pos"], p["_fiable"] = o, True
         else:
             p["_pos"], p["_fiable"] = s, dg <= LEJOS_GUIA
@@ -349,13 +469,21 @@ def reconstruir(num, linea, osm, servidor, log):
                 cands.append(("recta", dict(geom=[a["pt"], b["pt"]], rot=set(), dist=km(a["pt"], b["pt"]))))
             nombre, mejor = min(cands, key=lambda c: puntuar(g_ab, c[1]["geom"], c[1]["dist"])[0])
             sc, dm, ex = puntuar(g_ab, mejor["geom"], mejor["dist"])
+            if sc >= ORIGINAL_SI and len(g_ab) > 2 and all(proyectar(guia, acc, w["pt"])[0] < 0.04 for w in (a, b)):
+                # la ruta calculada da un rodeo (sentidos únicos, giros prohibidos en OSM…) y el original de ese
+                # tramo va por calles de verdad: se respeta el original
+                fr = fraccion_en_calles(g_ab, servidor)
+                if fr is not None and fr >= 0.9:
+                    log(f"   ~ se conserva el original ({fr:.0%} por calles) en vez de un rodeo de {dm:.0f} m")
+                    nombre, mejor = "trazado original (va por calles)", dict(geom=g_ab, rot=set(), dist=longitud(g_ab))
+                    sc, dm, ex = puntuar(g_ab, mejor["geom"], mejor["dist"])
             if sc >= ACEPTA and dm > 100 and all(proyectar(guia, acc, w["pt"])[0] < 0.06 for w in (a, b)):
                 # las dos paradas están sobre el trazado original y aun así la ruta se va lejos: falta una vía en
                 # OpenStreetMap (calle nueva, pista…). Se conserva el dibujo original de ese tramo.
                 log(f"   ~ tramo sin vía en OSM: se conserva el trazado original ({dm:.0f} m de separación con la ruta)")
                 nombre, mejor = "trazado original", dict(geom=g_ab, rot=set(), dist=longitud(g_ab))
                 sc, dm, ex = puntuar(g_ab, mejor["geom"], mejor["dist"])
-            if sc >= ACEPTA:
+            if sc >= AVISO:
                 dudosos += 1
                 nom = lambda w, d: paradas[w["paradas"][0]]["n"] if w["paradas"] else d
                 log(f"   ? {nom(a, 'inicio')} → {nom(b, 'final')}: a {dm:.0f} m de media del original"
@@ -383,6 +511,7 @@ def reconstruir(num, linea, osm, servidor, log):
     geom, rot, idx_wp = [], set(), [0]
     for t_i, tm in enumerate(tramos):
         g = list(tm["geom"]) if tm["geom"] else [wps[t_i]["pt"], wps[t_i + 1]["pt"]]
+        g = recortar_vueltas(g, g[0], g[-1], guia, acc)
         rr = set(tm["rot"])
         if geom:
             g, rr = g[1:], {x - 1 for x in rr if x > 0}
@@ -390,7 +519,7 @@ def reconstruir(num, linea, osm, servidor, log):
         geom += g
         idx_wp.append(len(geom) - 1)
     rot = sorted(rot)
-    geom, prot = quitar_pinchos(geom, idx_wp + rot)
+    geom, prot = quitar_pinchos(geom, idx_wp + rot, guia)
     idx_wp, rot = prot[:len(idx_wp)], prot[len(idx_wp):]
     geom, mapa = simplificar_con_fijos(geom, idx_wp + rot)
     idx_wp = [mapa[i] for i in idx_wp]
@@ -430,8 +559,8 @@ def reconstruir(num, linea, osm, servidor, log):
         cands = ruta_tramo(servidor, g[0], g[-1], g, (rumbo_en(g, ac, 0.0), rumbo_en(g, ac, ac[-1])))
         if cands:
             _, mejor = min(cands, key=lambda c: puntuar(g, c[1]["geom"], c[1]["dist"])[0])
-            if puntuar(g, mejor["geom"], mejor["dist"])[0] < ACEPTA:
-                gg, _ = quitar_pinchos(mejor["geom"], [0, len(mejor["geom"]) - 1] + sorted(mejor["rot"]))
+            if puntuar(g, mejor["geom"], mejor["dist"])[0] < AVISO:
+                gg, _ = quitar_pinchos(mejor["geom"], [0, len(mejor["geom"]) - 1] + sorted(mejor["rot"]), g)
                 g = douglas_peucker(gg, 2.0)
         extra.append([[round(la, 6), round(lo, 6)] for la, lo in g])
     return res, geom, extra, dudosos, avisos

@@ -47,9 +47,11 @@ python revisar_trazados.py            # informe de solo lectura: tramos largos, 
 python analizar_rutas.py              # análisis de k, desvíos y paradas por línea
 ```
 
-`reconstruir_trazados.py` usa el trazado de Google solo como guía: enruta de parada en parada por la red viaria
-(OSRM, en el sentido de la marcha), recorre las rotondas por su carril, quita vueltas a manzanas sin parada,
-coloca cada parada en su marquesina de OpenStreetMap (o sobre la vía) y recalcula `k`. Avisa de los
+`reconstruir_trazados.py` necesita `pip install requests mapbox-vector-tile` (no hace falta en el servidor). Usa el trazado de Google solo como guía: enruta de parada en parada por la red viaria
+(OSRM, en el sentido de la marcha), recorre las rotondas por su carril, quita los rodeos que el original no tiene
+(vueltas a manzanas, pasar de largo una parada y volver) pero conserva los cambios de sentido reales, y donde la ruta
+calculada no encaja y el original ya va por calles reales, conserva el original. Coloca cada parada en su marquesina
+de OpenStreetMap (o sobre la vía) y recalcula `k`. Avisa de los
 tramos que no encajan con el original para revisarlos a mano. Las respuestas de OSRM se guardan en
 `datos/.cache_osrm/`.
 
