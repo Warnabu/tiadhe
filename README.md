@@ -48,10 +48,13 @@ python analizar_rutas.py              # análisis de k, desvíos y paradas por l
 ```
 
 `reconstruir_trazados.py` usa el trazado de Google solo como guía: enruta de parada en parada por la red viaria
-(OSRM, en el sentido de la marcha), sustituye cada rotonda por una esquina en su centro, quita idas y vueltas
-sin parada, coloca cada parada en su marquesina de OpenStreetMap (o sobre la vía) y recalcula `k`. Avisa de los
+(OSRM, en el sentido de la marcha), recorre las rotondas por su carril, quita vueltas a manzanas sin parada,
+coloca cada parada en su marquesina de OpenStreetMap (o sobre la vía) y recalcula `k`. Avisa de los
 tramos que no encajan con el original para revisarlos a mano. Las respuestas de OSRM se guardan en
 `datos/.cache_osrm/`.
+
+Donde varias líneas comparten calle, `bandas.py` las separa en paralelo (como un plano de metro): el servidor
+calcula qué líneas comparten cada tramo y la web desplaza cada una unos píxeles según el zoom.
 
 ## Investigación
 

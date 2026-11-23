@@ -13,8 +13,8 @@ da siempre un recorrido por carretera. El trazado original solo se usa como GUÍ
      carril contrario de una autovía (eso provocaba vueltas en rotondas y "lazos").
   2. Cada tramo entre dos paradas se compara con el trazado original (longitud y distancia media). Si se
      desvía, se repite con puntos de paso tomados del original y se queda el candidato que mejor encaja.
-  3. Las ROTONDAS se sustituyen por una esquina en su centro (nada de polígonos ni vueltas completas).
-  4. Se quitan "pinchos" (ir y volver por la misma calle) que no lleven a una parada.
+  3. Las ROTONDAS se recorren por su carril (el anillo de OpenStreetMap), no con los octógonos del mapa original.
+  4. Se quitan los bucles cortos que no llevan a ninguna parada (vueltas a una manzana para cambiar de sentido).
   5. Cada parada se coloca en la marquesina de OpenStreetMap más cercana (≤40 m) o, si no hay, sobre la vía.
      Las que están a >120 m del recorrido y sin marquesina (desvíos o datos dudosos) se dejan donde están y se
      avisa. A todas se les recalcula 'k' (km desde el origen) sobre el trazado nuevo: el servidor lo usa para los tiempos.
@@ -127,37 +127,6 @@ def douglas_peucker(t, tol_m=2.0):
     return [p for p, k in zip(t, keep) if k]
 
 
-def centro_circulo(pts):
-    """Ajuste de circunferencia (Kasa) → ((lat, lon), radio_m) o None."""
-    if len(pts) < 3:
-        return None
-    lat0, lon0 = pts[0]
-    c = math.cos(math.radians(lat0))
-    xy = [((p[1] - lon0) * c * 111320, (p[0] - lat0) * 110540) for p in pts]
-    n = len(xy)
-    sx = sum(x for x, _ in xy); sy = sum(y for _, y in xy)
-    sxx = sum(x * x for x, _ in xy); syy = sum(y * y for _, y in xy); sxy = sum(x * y for x, y in xy)
-    sz = [x * x + y * y for x, y in xy]
-    szx = sum(z * x for z, (x, _) in zip(sz, xy)); szy = sum(z * y for z, (_, y) in zip(sz, xy)); szz = sum(sz)
-    # resolver [sxx sxy sx; sxy syy sy; sx sy n] [A B C]^T = [szx szy szz]
-    M = [[sxx, sxy, sx, szx], [sxy, syy, sy, szy], [sx, sy, n, szz]]
-    for i in range(3):
-        piv = max(range(i, 3), key=lambda r: abs(M[r][i]))
-        if abs(M[piv][i]) < 1e-9:
-            return None
-        M[i], M[piv] = M[piv], M[i]
-        for r in range(3):
-            if r != i:
-                f = M[r][i] / M[i][i]
-                M[r] = [a - f * b for a, b in zip(M[r], M[i])]
-    A, B, C = (M[i][3] / M[i][i] for i in range(3))
-    cx, cy = A / 2, B / 2
-    r2 = C + cx * cx + cy * cy
-    if r2 <= 0:
-        return None
-    return (lat0 + cy / 110540, lon0 + cx / (c * 111320)), math.sqrt(r2)
-
-
 # ------------------------------------------------------------------ OSRM
 def osrm(servidor, wps, bearings=None, continue_straight=True, radio=RADIO_SNAP):
     import requests
@@ -198,53 +167,22 @@ def osrm(servidor, wps, bearings=None, continue_straight=True, radio=RADIO_SNAP)
 
 
 def geometria_tramo(leg):
-    """Geometría de un tramo [(lat, lon)] con las rotondas sustituidas por su centro.
-    Devuelve (puntos, centros) donde centros es el conjunto de índices que son esquinas de rotonda."""
-    pasos = leg["steps"]
-    out, rot = [], set()
-    i = 0
-    while i < len(pasos):
-        s = pasos[i]
+    """Geometría de un tramo [(lat, lon)] tal como la da OSRM: por el carril, también dentro de las rotondas
+    (en OpenStreetMap una rotonda es un anillo de muchos nodos, así que se dibuja como una curva).
+    Devuelve (puntos, set()) — el segundo valor se mantiene por compatibilidad."""
+    out = []
+    for s in leg["steps"]:
         pts = [(la, lo) for lo, la in s["coords"]]
-        if s["type"] in ("roundabout", "rotary") and len(pts) >= 2:
-            # el anillo puede venir partido en varios pasos seguidos
-            anillo = list(pts)
-            while i + 1 < len(pasos) and pasos[i + 1]["type"] in ("roundabout", "rotary"):
-                i += 1
-                anillo += [(la, lo) for lo, la in pasos[i]["coords"]][1:]
-            ajuste = centro_circulo(anillo)
-            arco = longitud(anillo) * 1000
-            if ajuste and 4 <= ajuste[1] <= 90 and arco >= 0.4 * ajuste[1]:
-                centro, r = ajuste
-            else:
-                centro, r = ((anillo[0][0] + anillo[-1][0]) / 2, (anillo[0][1] + anillo[-1][1]) / 2), 12.0
-            # quitar lo que ya está dentro de la rotonda por el lado de entrada
-            while len(out) > 1 and km(out[-1], centro) * 1000 < r * 1.25:
-                out.pop()
-            out.append(centro)
-            rot.add(len(out) - 1)
-            # y por el lado de salida (el siguiente paso empieza en el anillo)
-            if i + 1 < len(pasos):
-                sig = [(la, lo) for lo, la in pasos[i + 1]["coords"]]
-                j = 0
-                while j < len(sig) - 1 and km(sig[j], centro) * 1000 < r * 1.25:
-                    j += 1
-                out += sig[j:]
-                i += 2
-                continue
-            i += 1
-            continue
         if out and pts and km(out[-1], pts[0]) < 0.0005:
             pts = pts[1:]
         out += pts
-        i += 1
-    return out, rot
+    return out, set()
 
 
 def quitar_pinchos(t, protegidos, max_km=0.35):
-    """Quita bucles cortos (el recorrido vuelve a pasar a <12 m del mismo punto tras ≤max_km): vueltas a una
-    manzana, idas y vueltas, rotondas sin etiquetar… Si dentro del bucle hay puntos protegidos (paradas, esquinas
-    de rotonda) se cambia por una ida y vuelta recta a ellos, sin formas; si no, se elimina."""
+    """Quita bucles cortos (el recorrido vuelve a pasar a <12 m del mismo punto tras ≤max_km) que no llevan a
+    ninguna parada: vueltas a una manzana o a una rotonda para cambiar de sentido, idas y vueltas… Los bucles con
+    una parada dentro se dejan como están (por la calle): cortarlos dibujaría rectas a través de las manzanas."""
     protegidos = list(protegidos)
     cambiado = True
     while cambiado:
@@ -256,14 +194,11 @@ def quitar_pinchos(t, protegidos, max_km=0.35):
                     break
                 if km(t[i], t[j]) >= 0.012:
                     continue
-                dentro = sorted({p for p in protegidos if i < p < j})
-                if j - i - 1 <= len(dentro):
-                    continue  # ya es una ida y vuelta mínima
-                nuevo = t[:i + 1] + [t[p] for p in dentro] + t[j:]
-                pos = {p: i + 1 + n for n, p in enumerate(dentro)}
-                quitados = (j - i - 1) - len(dentro)
-                protegidos = [pos[p] if p in pos else (p if p <= i else p - quitados) for p in protegidos]
-                t = nuevo
+                if any(i < p < j for p in protegidos):
+                    continue
+                quitados = j - i - 1
+                protegidos = [p if p <= i else p - quitados for p in protegidos]
+                t = t[:i + 1] + t[j:]
                 cambiado = True
                 break
             if cambiado:

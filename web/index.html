@@ -236,9 +236,13 @@ addEventListener('resize', () => map.invalidateSize());
 // ── Datos ──
 let paradas = [], lugares = [], colores = {}, rutas = {}, actual = null, filtro = null, timer = null, marcaSel = null, marcaYo = null, marcadas = new Set();
 async function datos() {
-  const [lineas, ps, osm, lug] = await Promise.all([json('/api/lineas'), json('/api/paradas'), json('/api/osm'), json('/api/lugares')]);
+  const [lineas, ps, osm, lug] = await Promise.all([json('/api/lineas?bandas=1'), json('/api/paradas'), json('/api/osm'), json('/api/lugares')]);
   lugares = lug; paradas = ps;
-  lineas.forEach(l => { colores[l.num] = l.color; rutas[l.num] = L.polyline(l.trazado, { color: l.color, weight: 3.5, opacity: .75, interactive: false }).addTo(map); });
+  lineas.forEach(l => {
+    colores[l.num] = l.color;
+    rutas[l.num] = l.tramos.map(t => { const c = L.polyline(t.p, { color: l.color, weight: 3.5, opacity: .75, interactive: false }); c._base = t.p; c._o = t.o; return c.addTo(map); });
+  });
+  recolocar();
   osm.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
     .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon })));
   ps.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
@@ -248,12 +252,34 @@ function foco(p, z = 15) {
   map.setView([p.lat, p.lon], Math.max(map.getZoom(), z), { animate: false });
   if (!ancho()) map.panBy([0, Math.round(innerHeight * .2)], { animate: false });
 }
+// Donde varias líneas comparten calle se dibujan en paralelo (como un plano de metro): cada tramo trae su
+// desplazamiento lateral "o" en anchos de línea, que aquí se pasa a píxeles para el zoom actual.
+function desplazar(lls, px) {
+  if (!px || lls.length < 2) return lls;
+  const P = lls.map(x => map.latLngToLayerPoint(x)), out = [];
+  const nor = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l < 1e-6 ? null : { x: -dy / l, y: dx / l }; };
+  for (let i = 0; i < P.length; i++) {
+    const n1 = i > 0 ? nor(P[i - 1], P[i]) : null, n2 = i < P.length - 1 ? nor(P[i], P[i + 1]) : null;
+    const a = n1 || n2, b = n2 || n1;
+    if (!a) { out.push(lls[i]); continue; }
+    let nx = a.x + b.x, ny = a.y + b.y; const l = Math.hypot(nx, ny);
+    if (l < 1e-6) { nx = a.x; ny = a.y; } else { nx /= l; ny /= l; }
+    const m = px / Math.max(.5, nx * a.x + ny * a.y);   // inglete limitado en las curvas cerradas
+    out.push(map.layerPointToLatLng(L.point(P[i].x + nx * m, P[i].y + ny * m)));
+  }
+  return out;
+}
+function recolocar() {
+  const paso = map.getZoom() >= 13 ? 3.5 : map.getZoom() >= 11 ? 2.5 : 1.5;
+  Object.values(rutas).forEach(cs => cs.forEach(c => c.setLatLngs(desplazar(c._base, c._o * paso))));
+}
+map.on('zoomend', recolocar);
 // Al elegir una parada se resaltan los recorridos de sus líneas y se atenúan los demás.
 function resaltar(nums) {
   const set = nums && nums.length ? new Set(nums) : null;
-  Object.entries(rutas).forEach(([n, r]) => {
+  Object.entries(rutas).forEach(([n, cs]) => {
     const on = !set || set.has(n);
-    r.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : .12 });   // sin bringToFront: taparía las paradas
+    cs.forEach(c => c.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : .12 }));   // sin bringToFront: taparía las paradas
   });
 }
 function elegir(p) {

@@ -303,12 +303,12 @@ def test_edge_cases():
     manejador = ManejadorEdgeCases()
     
     # Test GPS callejón - posición cerca de la parada pero fuera de la ruta (un callejón al lado).
-    # Se busca un punto a ~30-45 m de la parada que quede fuera del trazado (depende de por dónde vaya la calle).
+    # Se busca un punto a 30-150 m de la parada (el motor la considera "en parada" hasta 200 m) fuera del trazado (depende de por dónde vaya la calle).
     import math
     from prototipo_sube import punto_en_trazado
     lat_c, lon_c = next((parada.lat + r / 111320 * math.cos(math.radians(a)),
                          parada.lon + r / (111320 * math.cos(math.radians(parada.lat))) * math.sin(math.radians(a)))
-                        for r in (30, 35, 40, 45) for a in range(0, 360, 15)
+                        for r in (30, 45, 60, 80, 100, 125, 150) for a in range(0, 360, 15)
                         if not punto_en_trazado(parada.lat + r / 111320 * math.cos(math.radians(a)),
                                                 parada.lon + r / (111320 * math.cos(math.radians(parada.lat))) * math.sin(math.radians(a)),
                                                 linea.trazado)[0])

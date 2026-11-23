@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request
 
 from comunidad_pg import Comunidad, Error, km_ll, mensaje
 
+import bandas
 import guaguas as g
 import postgresql_db as pg_db
 
@@ -308,11 +309,24 @@ def api_paradas():
                      for p in PARADAS.values()])
 
 
+def _partes(l):
+    """Trazado de una línea como lista de tramos [[lat, lon], …]."""
+    tr = l.get("trazado")
+    if not tr:
+        return [[[p["lat"], p["lon"]] for p in l["paradas"] if "opt" not in p]]
+    return [tr] if isinstance(tr[0][0], (int, float)) else tr
+
+
+BANDAS = bandas.calcular({n: _partes(l) for n, l in BASE.items()})  # líneas paralelas donde comparten calle
+
+
 @app.get("/api/lineas")
 def api_lineas():
+    if request.args.get("bandas"):  # la web: tramos con desplazamiento lateral, sin el trazado completo
+        return jsonify([dict(num=n, nombre=HORARIOS[n]["nombre"], color=COLOR[n], tramos=BANDAS.get(n, [])) for n in BASE])
     return jsonify([dict(num=n, nombre=HORARIOS[n]["nombre"], color=COLOR[n], calibrada="duracion_min" in l, real=bool(l.get("real")),
-                         trazado=(l["trazado"][0] if (l.get("trazado") and len(l["trazado"]) == 1 and isinstance(l["trazado"][0], list) and l["trazado"][0] and isinstance(l["trazado"][0][0], list)) else (l["trazado"] if "trazado" in l else [[p["lat"], p["lon"]] for p in l["paradas"] if "opt" not in p])))
-                     for n, l in BASE.items()])
+                         trazado=(_partes(l)[0] if len(_partes(l)) == 1 else _partes(l)))
+                    for n, l in BASE.items()])
 
 
 @app.get("/api/lugares")
