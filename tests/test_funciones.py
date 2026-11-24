@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Pruebas de las funciones de la app: avísame 5 min antes, favoritas, ver línea, cómo llegar, estadísticas,
+horas conservadoras y vista previa al compartir.
+
+    python tests/test_funciones.py
+"""
+import base64, json, os, sys, time, uuid
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RAIZ)
+os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
+os.environ["GUAGUAS_SIN_LIMITES"] = "1"
+os.environ.pop("RENDER", None)
+for f in ("comunidad_test.db", "comunidad_test.db-wal", "comunidad_test.db-shm"):
+    try:
+        os.remove(os.path.join(RAIZ, "datos", f))
+    except OSError:
+        pass
+
+from datetime import datetime, timedelta
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from app import servidor as s, guaguas as g
+from app.comunidad import mensaje
+
+ok = fallos = 0
+def check(cond, texto):
+    global ok, fallos
+    ok += bool(cond); fallos += not cond
+    print(("[OK] " if cond else "[FAIL] ") + texto)
+
+c = s.app.test_client()
+k = ec.generate_private_key(ec.SECP256R1())
+raw = k.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+dev = s.Comunidad.id_de(raw)
+
+def pedir(m, ruta, body=None, sin_dev=False):
+    ts, n = str(int(time.time())), uuid.uuid4().hex
+    txt = json.dumps(body, separators=(",", ":")) if body is not None else ""
+    r_, s_ = decode_dss_signature(k.sign(mensaje(m, ruta, ts, n, txt), ec.ECDSA(hashes.SHA256())))
+    h = {"X-Ts": ts, "X-Nonce": n, "Content-Type": "application/json",
+         "X-Firma": base64.b64encode(r_.to_bytes(32, "big") + s_.to_bytes(32, "big")).decode()}
+    if not sin_dev:
+        h["X-Dispositivo"] = dev
+    r = c.open(ruta, method=m, data=txt or None, headers=h)
+    return r.status_code, r.get_json()
+
+check(pedir("POST", "/api/registro", {"pub": base64.b64encode(raw).decode()}, sin_dev=True)[0] == 200, "alta de dispositivo")
+
+# --- horas conservadoras: lo que se muestra es siempre lo más pronto
+ahora = datetime(2026, 11, 24, 10, 0)
+r = dict(prec="estimado", cal=False, off=80, llegada=ahora + timedelta(minutes=90))
+check(g.texto_espera(r, ahora).startswith("desde las") and g.llegada_minima(r) < r["llegada"], f"más de 1 h: «{g.texto_espera(r, ahora)}»")
+r = dict(prec="estimado", cal=False, off=40, llegada=ahora + timedelta(minutes=25))
+lo = int(g.texto_espera(r, ahora).split()[1].split("-")[0])
+check(lo <= 25 - g.margenes(r)[0], f"rango: «{g.texto_espera(r, ahora)}» (empieza en lo más pronto)")
+check(g.margenes(dict(prec="oficial"))[0] == 0, "hora oficial de cabecera sin margen")
+
+# --- paradas fusionadas: la estación es una sola
+est = [v for v in s.PARADAS.values() if v["nombre"].lower().startswith("estacion puerto")]
+check(len(est) == 1 and len(est[0]["lineas"]) >= 8, f"la estación de Puerto es una sola parada con {len(est[0]['lineas']) if est else 0} líneas")
+pid_est = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].lower().startswith("estacion puerto"))
+
+# --- avísame 5 min antes
+ahora_l = datetime.now(s.TZ).replace(tzinfo=None)
+sal = next(x for x in g.proximas(dict(nombre="e", ids=s.PARADAS[pid_est]["ids"]), ahora_l, s.HORARIOS, s.BASE, com=s.COM)
+           if (g.llegada_minima(x) - ahora_l).total_seconds() > 15 * 60)
+st, j = pedir("POST", "/api/recordatorio", {"parada": pid_est, "viaje": sal["viaje"]})
+check(st == 409, "sin notificaciones activadas pide activarlas")
+pedir("POST", "/api/register-fcm-token", {"fcm_token": "t" * 40})
+st, j = pedir("POST", "/api/recordatorio", {"parada": pid_est, "viaje": sal["viaje"]})
+check(st == 200 and j["activo"], f"aviso creado: {j.get('mensaje')}")
+check(pedir("GET", "/api/recordatorios")[1]["recordatorios"] == [{"parada": pid_est, "viaje": sal["viaje"]}], "aparece en los pendientes")
+enviados = []
+s.send_fcm_push = lambda tok, t, b, data=None: (enviados.append((t, b, data)) or (True, None))
+s.revisar_recordatorios()
+check(not enviados, "no se envía mientras la guagua está lejos")
+real = s.datetime
+class Reloj(real):
+    @classmethod
+    def now(cls, tz=None):
+        return real.now(tz) + (g.llegada_minima(sal) - ahora_l) - timedelta(minutes=4)
+s.datetime = Reloj
+s.revisar_recordatorios()
+s.datetime = real
+check(len(enviados) == 1 and "en unos 4 min" in enviados[0][1] and enviados[0][2]["url"].endswith(pid_est),
+      f"a 4 min se envía la notificación: {enviados[0][1] if enviados else '-'}")
+check(pedir("GET", "/api/recordatorios")[1]["recordatorios"] == [], "y ya no está pendiente")
+st, _ = pedir("POST", "/api/recordatorio", {"parada": pid_est, "viaje": "20200101|01|ida|10:00|||"})
+check(st == 400, "un viaje que no existe se rechaza")
+
+# --- favoritas (solo con sesión)
+tok = s.create_internal_token("uid-prueba")
+check(c.get("/api/favoritas").status_code == 401, "favoritas sin sesión: 401")
+check(c.get("/api/favoritas", headers={"Authorization": "Bearer falso"}).status_code == 401, "token falso: 401")
+j = c.post("/api/favoritas", json={"parada": pid_est, "si": True}, headers={"Authorization": "Bearer " + tok}).get_json()
+check(j["paradas"] == [pid_est], "guardar favorita")
+j = c.post("/api/favoritas", json={"parada": pid_est, "si": False}, headers={"Authorization": "Bearer " + tok}).get_json()
+check(j["paradas"] == [], "quitar favorita")
+
+# --- ver línea y cómo llegar
+j = c.get("/api/linea/01").get_json()
+check(len(j["paradas"]) > 50 and j["paradas"][0]["nombre"].lower().startswith("estacion puerto"), f"línea 01: {len(j['paradas'])} paradas desde la estación")
+check(all(len(v) == len(set(v)) for v in j["salidas"].values()), "salidas sin horas repetidas")
+check(c.get("/api/linea/xx").status_code == 404, "línea inexistente: 404")
+mj = next(k_ for k_, v in s.PARADAS.items() if v["nombre"] == "Morro Jable" and "01" in v["lineas"])
+j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
+check(j["opciones"] and all(o["linea"] in ("01", "10", "15") for o in j["opciones"]), f"Puerto → Morro Jable: {len(j['opciones'])} guaguas directas")
+o = j["opciones"][0]
+check(o["llega"] > o["sale"] or o["manana"], "llega después de salir")
+j2 = c.get(f"/api/ruta?desde={mj}&hasta={pid_est}").get_json()
+check(all(x["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
+
+# --- estadísticas y vista previa
+j = c.get("/api/estadisticas").get_json()
+check(j["ok"] and {"avisos", "personas", "confirmadas"} <= set(j), f"estadísticas de hoy: {j}")
+h = c.get("/?parada=" + pid_est).get_data(as_text=True)
+check('og:title" content="Guaguas en Estacion Puerto' in h and "<title>Guaguas en Estacion Puerto" in h, "vista previa de una parada")
+h = c.get("/?parada=%3Cscript%3E").get_data(as_text=True)
+import re
+og = " ".join(re.findall(r'<meta (?:property|name)="(?:og:|twitter:|description)[^>]*>', h))
+check("<script" not in og.lower() and "%3c" not in og.lower() and 'og:title" content="Guaguas Fuerteventura' in og, "parámetro manipulado: vista previa normal, sin inyectar nada")
+
+print(f"\n{ok} correctas, {fallos} fallos")
+sys.exit(1 if fallos else 0)

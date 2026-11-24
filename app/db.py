@@ -122,6 +122,25 @@ CREATE TABLE IF NOT EXISTS ubicaciones_activas (
     PRIMARY KEY (dev)
 );
 
+-- "Avísame 5 min antes": un aviso pendiente por dispositivo, viaje y parada
+CREATE TABLE IF NOT EXISTS recordatorios (
+    dev TEXT NOT NULL REFERENCES dispositivos(id),
+    viaje TEXT NOT NULL,
+    parada TEXT NOT NULL,
+    minutos INT NOT NULL DEFAULT 5,
+    creado BIGINT NOT NULL,
+    enviado BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (dev, viaje, parada)
+);
+
+-- Paradas favoritas de cada cuenta de Google (uid de Firebase)
+CREATE TABLE IF NOT EXISTS favoritas (
+    uid TEXT NOT NULL,
+    parada TEXT NOT NULL,
+    creado BIGINT NOT NULL,
+    PRIMARY KEY (uid, parada)
+);
+
 CREATE INDEX IF NOT EXISTS idx_subidas_dev_ts ON subidas(dev, ts);
 CREATE INDEX IF NOT EXISTS idx_subidas_viaje_cluster ON subidas(viaje, cluster);
 CREATE INDEX IF NOT EXISTS idx_subidas_linea_sentido ON subidas(linea, sentido, variante);
@@ -154,6 +173,11 @@ CREATE TABLE IF NOT EXISTS registros(ip TEXT, ts INT);
 CREATE TABLE IF NOT EXISTS ubicaciones_activas(
     dev TEXT PRIMARY KEY, lat REAL, lon REAL, ts INT, intencion_id TEXT
 );
+CREATE TABLE IF NOT EXISTS recordatorios(
+    dev TEXT NOT NULL, viaje TEXT NOT NULL, parada TEXT NOT NULL, minutos INT NOT NULL DEFAULT 5,
+    creado INT NOT NULL, enviado INT NOT NULL DEFAULT 0, PRIMARY KEY(dev, viaje, parada)
+);
+CREATE TABLE IF NOT EXISTS favoritas(uid TEXT NOT NULL, parada TEXT NOT NULL, creado INT NOT NULL, PRIMARY KEY(uid, parada));
 CREATE INDEX IF NOT EXISTS idx_subidas_dev_ts ON subidas(dev, ts);
 CREATE INDEX IF NOT EXISTS idx_subidas_viaje_cluster ON subidas(viaje, cluster);
 CREATE INDEX IF NOT EXISTS idx_subidas_linea_sentido ON subidas(linea, sentido, variante);
@@ -201,6 +225,19 @@ def _migrar(cur) -> None:
     # Seguridad (Supabase): la API REST pública de Supabase expone todas las tablas del esquema. Con Row Level
     # Security activado y sin ninguna política, nadie puede leerlas ni escribirlas por esa vía (ni con la clave
     # "anon"). El servidor no se ve afectado: se conecta como propietario de las tablas, que se salta RLS.
+    # Limpieza: tabla de un prototipo antiguo que la app no usa. Solo se borra si está vacía.
+    try:
+        cur.execute("SAVEPOINT limpieza")
+        cur.execute("SELECT to_regclass('intenciones') IS NOT NULL AS existe")
+        if cur.fetchone()["existe"]:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM intenciones) AS hay")
+            if not cur.fetchone()["hay"]:
+                cur.execute("DROP TABLE intenciones")
+                print("LIMPIEZA: borrada la tabla vacía 'intenciones' (no la usa la app)", flush=True)
+        cur.execute("RELEASE SAVEPOINT limpieza")
+    except Exception as e:
+        cur.execute("ROLLBACK TO SAVEPOINT limpieza")
+        print(f"AVISO LIMPIEZA: {e}", flush=True)
     try:
         cur.execute("SAVEPOINT rls")
         cur.execute("SELECT c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "

@@ -342,6 +342,57 @@ class Comunidad:
             pg.execute("DELETE FROM registros WHERE ts < %s", (int(ahora - 2 * 86400),))
         self.limpiar(ahora)
 
+    def estadisticas_hoy(self, ahora):
+        """Actividad de la comunidad desde las 00:00 (hora de Canarias): para mostrar que avisar sirve."""
+        medianoche = int(datetime.fromtimestamp(ahora, TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        avisos = pg.execute_one("SELECT COUNT(*) AS n, COUNT(DISTINCT dev) AS p FROM subidas WHERE ts >= %s", (medianoche,))
+        conf = pg.execute_one("SELECT COUNT(*) AS n FROM observaciones WHERE ts >= %s", (medianoche,))
+        return dict(avisos=int(avisos["n"] or 0), personas=int(avisos["p"] or 0), confirmadas=int(conf["n"] or 0))
+
+    # ------------------------------------------------ "avísame 5 min antes"
+    MAX_RECORDATORIOS = 5
+
+    def crear_recordatorio(self, dev, viaje, parada, minutos, ahora):
+        with self.lock:
+            n = pg.execute_one("SELECT COUNT(*) AS c FROM recordatorios WHERE dev=%s AND enviado=0", (dev,))["c"]
+            if n >= self.MAX_RECORDATORIOS:
+                raise Error(f"ya tienes {n} avisos pendientes; cancela alguno", 429)
+            pg.execute("INSERT INTO recordatorios(dev, viaje, parada, minutos, creado, enviado) VALUES(%s,%s,%s,%s,%s,0) "
+                       "ON CONFLICT (dev, viaje, parada) DO UPDATE SET minutos=EXCLUDED.minutos, enviado=0",
+                       (dev, viaje, parada, int(minutos), int(ahora)))
+
+    def cancelar_recordatorio(self, dev, viaje, parada):
+        with self.lock:
+            pg.execute("DELETE FROM recordatorios WHERE dev=%s AND viaje=%s AND parada=%s", (dev, viaje, parada))
+
+    def recordatorios_de(self, dev):
+        return [dict(r) for r in pg.execute("SELECT viaje, parada FROM recordatorios WHERE dev=%s AND enviado=0", (dev,), fetch=True) or []]
+
+    def recordatorios_pendientes(self):
+        return [dict(r) for r in pg.execute("SELECT dev, viaje, parada, minutos FROM recordatorios WHERE enviado=0", fetch=True) or []]
+
+    def marcar_recordatorio(self, dev, viaje, parada, ahora):
+        with self.lock:
+            pg.execute("UPDATE recordatorios SET enviado=%s WHERE dev=%s AND viaje=%s AND parada=%s", (int(ahora), dev, viaje, parada))
+            pg.execute("DELETE FROM recordatorios WHERE creado < %s", (int(ahora - 2 * 86400),))
+
+    # ------------------------------------------------ paradas favoritas (cuenta de Google)
+    MAX_FAVORITAS = 30
+
+    def favoritas(self, uid):
+        return [r["parada"] for r in pg.execute("SELECT parada FROM favoritas WHERE uid=%s ORDER BY creado", (uid,), fetch=True) or []]
+
+    def poner_favorita(self, uid, parada, si, ahora):
+        with self.lock:
+            if not si:
+                pg.execute("DELETE FROM favoritas WHERE uid=%s AND parada=%s", (uid, parada))
+                return
+            n = pg.execute_one("SELECT COUNT(*) AS c FROM favoritas WHERE uid=%s", (uid,))["c"]
+            if n >= self.MAX_FAVORITAS:
+                raise Error(f"máximo {self.MAX_FAVORITAS} paradas favoritas", 400)
+            pg.execute("INSERT INTO favoritas(uid, parada, creado) VALUES(%s,%s,%s) ON CONFLICT (uid, parada) DO NOTHING",
+                       (uid, parada, int(ahora)))
+
     def obtener_fcm_token(self, dev_id: str) -> str:
         row = pg.execute_one("SELECT fcm_token FROM dispositivos WHERE id=%s", (dev_id,))
         return row["fcm_token"] if row and row["fcm_token"] else None

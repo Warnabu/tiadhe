@@ -1,7 +1,4 @@
-# Desarrollo: herramientas de datos y prototipo de investigación (no hace falta en el servidor).
+# Desarrollo: herramientas de datos (no hace falta en el servidor).
 -r requirements.txt
 mapbox-vector-tile     # herramientas/ajustar_rutas.py (red de calles)
 folium                 # python -m app.guaguas --mapa
-fastapi                # investigacion/api_sube.py
-pydantic
-uvicorn

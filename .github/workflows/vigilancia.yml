@@ -1,0 +1,76 @@
+name: Vigilancia
+
+# Cada 10 minutos: visita la web (así Render, en el plan gratuito, no se duerme y nadie espera un minuto en la
+# primera visita) y comprueba que funciona. Si falla, abre una incidencia en el repo (GitHub te avisa por correo y en
+# la app); cuando vuelve a funcionar, la cierra sola. GitHub puede retrasar unos minutos las ejecuciones programadas.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: vigilancia
+  cancel-in-progress: false
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      URL: https://tiadhe-backend.onrender.com
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Comprobar la web
+        id: comprobar
+        shell: bash
+        run: |
+          set +e
+          problemas=()
+          # 1) responde (si estaba dormida tarda hasta ~1 min en despertar: varios intentos)
+          for i in 1 2 3 4; do
+            code=$(curl -s -m 90 -o /dev/null -w '%{http_code}' "$URL/health")
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          [ "$code" = "200" ] || problemas+=("La web no responde: /health devuelve $code")
+          if [ "$code" = "200" ]; then
+            # 2) hay paradas y la parada con más líneas tiene guaguas en las próximas horas
+            resumen=$(curl -s -m 60 "$URL/api/paradas" | python3 -c '
+          import json, sys, urllib.request, os
+          ps = json.load(sys.stdin)
+          p = max(ps, key=lambda x: len(x["lineas"]))
+          d = json.load(urllib.request.urlopen(os.environ["URL"] + "/api/parada/" + p["id"], timeout=60))
+          n = sum(len(g["salidas"]) for g in d["grupos"])
+          print(len(ps), n, p["nombre"])' 2>&1)
+            read -r nparadas nsalidas nombre <<< "$resumen"
+            [ "${nparadas:-0}" -gt 100 ] 2>/dev/null || problemas+=("Faltan paradas: /api/paradas → ${resumen}")
+            [ "${nsalidas:-0}" -gt 0 ] 2>/dev/null || problemas+=("No salen guaguas en la parada principal (${nombre:-?}): ¿horarios desfasados?")
+          fi
+          if [ ${#problemas[@]} -eq 0 ]; then
+            echo "Todo bien: ${resumen}"
+            echo "estado=ok" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "${problemas[@]}"
+            echo "estado=fallo" >> "$GITHUB_OUTPUT"
+            { echo "detalle<<FIN"; printf -- '- %s\n' "${problemas[@]}"; echo "FIN"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Avisar (abrir o cerrar incidencia)
+        shell: bash
+        run: |
+          gh label create caida --color B60205 --description "La web no funciona (Vigilancia)" --force >/dev/null 2>&1 || true
+          abierta=$(gh issue list --label caida --state open --json number -q '.[0].number')
+          if [ "${{ steps.comprobar.outputs.estado }}" = "fallo" ]; then
+            cuerpo=$(printf '%s\n\nDetectado: %s UTC. Ejecución: %s/%s/actions/runs/%s' \
+              "${{ steps.comprobar.outputs.detalle }}" "$(date -u '+%d/%m %H:%M')" "$GITHUB_SERVER_URL" "$GH_REPO" "$GITHUB_RUN_ID")
+            if [ -z "$abierta" ]; then
+              gh issue create --label caida --title "La web de Guaguas FTV tiene un problema" --body "$cuerpo"
+            fi
+            exit 1
+          elif [ -n "$abierta" ]; then
+            gh issue close "$abierta" --comment "Vuelve a funcionar ($(date -u '+%d/%m %H:%M') UTC)."
+          fi

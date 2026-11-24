@@ -158,8 +158,37 @@ const Guaguas = (() => {
     return j;
   }
 
+  // "Avísame 5 min antes": activa las notificaciones (pide permiso si hace falta) y lo pide al servidor.
+  async function recordatorio(paradaId, viaje, cancelar = false) {
+    if (!cancelar) {
+      const r = await activarNotificaciones(true);
+      if (r !== "ok") {
+        const e = new Error(r === "denegado" ? "Las notificaciones están bloqueadas en este navegador: actívalas en sus ajustes."
+          : "Este navegador no puede recibir avisos (en iPhone, añade la web a la pantalla de inicio).");
+        throw e;
+      }
+    }
+    await listoP;
+    return pedir("POST", "/api/recordatorio", { parada: paradaId, viaje, ...(cancelar ? { cancelar: true } : {}) });
+  }
+  async function recordatorios() {
+    await listoP;
+    return (await pedir("GET", "/api/recordatorios")).recordatorios || [];
+  }
+  // Favoritas: solo con sesión de Google (el servidor comprueba el token interno)
+  async function favoritas(paradaId, si) {
+    if (!internalToken) return null;
+    const opts = { headers: { "Authorization": "Bearer " + internalToken, "Content-Type": "application/json" } };
+    const r = paradaId === undefined ? await fetch("/api/favoritas", opts)
+      : await fetch("/api/favoritas", { ...opts, method: "POST", body: JSON.stringify({ parada: paradaId, si }) });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error((j && j.error) || `error ${r.status}`);
+    return j.paradas;
+  }
+
   return {
-    iniciar, marcarSubida,
+    iniciar, marcarSubida, recordatorio, recordatorios, favoritas,
+    conSesion: () => !!internalToken,
     onPerfil: f => { cambioPerfil = f; if (perfil) f(perfil); },
     perfil: () => perfil,
     signIn: () => window.firebaseSignIn?.(),

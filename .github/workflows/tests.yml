@@ -18,11 +18,11 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Comunidad (firmas, consenso, reputación)
         run: python tests/test_comunidad.py
+      - name: Funciones (avísame, favoritas, líneas, cómo llegar)
+        run: python tests/test_funciones.py
       - name: Seguridad (IP real, cabeceras, límites)
         run: python tests/test_seguridad.py
       - name: Regresiones de producción (con SQLite)
         run: python tests/test_produccion.py
-      - name: Prototipo de detección de subida
-        run: python investigacion/test_motor_senales.py
       - name: El servidor arranca como en Render
         run: python -c "import servidor; print(len(servidor.PARADAS), 'paradas')"

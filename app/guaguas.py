@@ -236,8 +236,29 @@ def prediccion_viaje(viaje, ids, horarios, base, com=None):
         off = com.aprendido(num, sent, variante_de(s), hit["id"], off) or off
     inicio = datetime(fecha.year, fecha.month, fecha.day, hh, mm)
     return dict(linea=num, sentido=sent, variante=variante_de(s), off=off, inicio=inicio,
+                restantes=sum(1 for p in seq if p["km"] > hit["km"] + 1e-6),
                 llegada=inicio + timedelta(minutes=off), llegada_ts=int((inicio + timedelta(minutes=off)).timestamp()),
                 destino=nombre_destino(seq[-1], base[num]))
+
+
+def trayecto(viaje, ids_origen, ids_destino, horarios, base):
+    """Minutos desde la salida de cabecera hasta el origen y hasta el destino para un viaje concreto, si el viaje pasa
+    por los dos y el destino va DESPUÉS del origen (el destino puede ser el final de la línea). Si no, None."""
+    try:
+        f, num, sent, h, via, ini, fin = viaje.split("|")
+        fecha = datetime.strptime(f, "%Y%m%d").date()
+    except ValueError:
+        return None
+    s = next((x for x in horarios.get(num, {}).get("salidas", []) if x["s"] == sent and x["h"] == h
+              and variante_de(x) == f"{via}|{ini}|{fin}" and tipo_dia(fecha) in x["d"].split(",")), None)
+    if s is None:
+        return None
+    seq = recorrido(num, sent, s, base)
+    o = next((p for p in seq if p.get("id") in ids_origen), None)
+    d = next((p for p in seq if p.get("id") in ids_destino and o is not None and p["km"] > o["km"] + 1e-6), None)
+    if o is None or d is None:
+        return None
+    return minutos(o, base[num]), minutos(d, base[num])
 
 
 def proximas(objetivo, ahora, horarios, base, com=None, gracia=1, modo="dinamico"):
@@ -292,15 +313,33 @@ def texto_espera(r, ahora):
         return "pasando ahora" if dif > -1 else f"pasó hace {round(-dif)} min"
     if dif < 1:
         return "ahora mismo" if dif > -1 else f"salió hace {round(-dif)} min"
-    margen = 2 if r["prec"] == "vivo" else 0 if r["prec"] == "oficial" else max(2, round((0.07 if r.get("cal") else 0.12) * r["off"])) + (2 if r["prec"] == "aprox" else 0)
+    antes, despues = margenes(r)
     if dif < 60:
-        if margen == 0:
+        if antes == despues == 0:
             return "ahora mismo" if dif < 1 else f"en {round(dif)} min"
-        lo, hi = max(0, round(dif - margen)), round(dif + margen)
+        lo, hi = max(0, math.floor(dif - antes)), math.ceil(dif + despues)
         if hi < 60:
             return f"en {lo}-{hi} min"
-    dia = " (mañana)" if r["llegada"].date() > ahora.date() else ""
-    return f"{'' if margen == 0 else 'sobre las '}{r['llegada']:%H:%M}{dia}"
+    minima = llegada_minima(r)
+    dia = " (mañana)" if minima.date() > ahora.date() else ""
+    return f"{'' if antes == 0 else 'desde las '}{minima:%H:%M}{dia}"
+
+
+def margenes(r):
+    """(min. que puede adelantarse, min. que puede retrasarse) respecto a la estimación. Es preferible esperar un poco
+    a perder la guagua: el margen hacia antes es 1,5 veces el de después, y lo que se muestra es siempre lo más pronto
+    que puede pasar."""
+    if r["prec"] == "oficial":
+        return 0, 0                       # salida de cabecera: no sale antes de su hora
+    if r["prec"] in ("vivo", "confirmada"):
+        return 3, 2                       # corregida con avisos de la comunidad
+    m = max(2, round((0.07 if r.get("cal") else 0.12) * r["off"])) + (2 if r["prec"] == "aprox" else 0)
+    return math.ceil(1.5 * m), m
+
+
+def llegada_minima(r):
+    """Lo más pronto que puede pasar la guagua (lo que se muestra y con lo que se avisa)."""
+    return r["llegada"] - timedelta(minutes=margenes(r)[0])
 
 
 def resumen(objetivo, ahora, horarios, base, por_linea=2):

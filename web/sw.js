@@ -1,5 +1,5 @@
 // Service Worker de Guaguas FTV. Súbele la versión en cada despliegue que cambie assets.
-const VERSION = 'v8-2026-11-23-seguridad';
+const VERSION = 'v9-2026-11-24-funciones';
 const CACHE = 'guaguas-ftv-' + VERSION;
 const ICONOS = ['/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
 const LEAFLET = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
@@ -79,8 +79,9 @@ self.addEventListener('push', e => {
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   e.waitUntil((async () => {
+    const url = (e.notification.data && e.notification.data.url) || '/';   // p. ej. /?parada=… del aviso
     const lista = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of lista) if ('focus' in c) return c.focus();
-    return clients.openWindow('/');
+    for (const c of lista) if ('focus' in c) { if ('navigate' in c) await c.navigate(url).catch(() => {}); return c.focus(); }
+    return clients.openWindow(url);
   })());
 });

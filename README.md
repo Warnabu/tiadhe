@@ -14,12 +14,10 @@ app/             lo que corre en producción
   bandas.py        líneas en paralelo donde comparten calle
   seguridad.py     cabeceras HTTP, IP real detrás del proxy, límite de peticiones por IP
 web/             la web (PWA): index.html, cliente.js, sw.js
-ios/             app iOS (SwiftUI) — montaje en docs/IOS_SETUP_GUIDE.md
 datos/           horarios, paradas y trazados — qué es cada archivo en datos/README.md
 herramientas/    scripts para preparar las rutas (importar, ajustar a las calles, revisar)
-investigacion/   prototipo de detección automática de subida (NO está en producción)
 tests/           pruebas del servidor
-docs/            guías (iOS, base de datos)
+docs/            guías (base de datos)
 servidor.py      punto de entrada (Render arranca `gunicorn servidor:app`)
 ```
 
@@ -38,8 +36,8 @@ Con `GUAGUAS_DEBUG=1` se puede simular la hora: `/api/parada/<id>?hora=2026-09-2
 ```bash
 ALLOW_SQLITE_FALLBACK=1 python tests/test_comunidad.py
 ALLOW_SQLITE_FALLBACK=1 python tests/test_seguridad.py
+ALLOW_SQLITE_FALLBACK=1 python tests/test_funciones.py
 ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE_URL real
-python investigacion/test_motor_senales.py
 ```
 
 **Actualizar las rutas** (si cambian los mapas de Tiadhe):
@@ -49,6 +47,24 @@ python herramientas/importar_mapas.py      # mapas de Google → datos/trazados_
 python herramientas/ajustar_rutas.py       # los pega a las calles reales → datos/paradas_reales.json
 python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectura)
 ```
+
+## Qué hace la app
+
+- Próximas guaguas en cada parada. Las horas estimadas muestran siempre **lo más pronto** que puede pasar
+  (rango "en 17-30 min" o "desde las 11:15"): es preferible esperar un poco a perderla.
+- **Tiempo real sin registro**: "Me he subido a esta guagua"; cuando coinciden varias personas, la hora se corrige
+  para las paradas siguientes. El panel muestra la actividad del día para animar a avisar.
+- **Avísame 5 min antes** (notificación push, aunque la web esté cerrada).
+- **Ver una línea** (tocando su número): recorrido, próximas salidas y paradas.
+- **Cómo llegar** de una parada a otra con guaguas directas.
+- **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
+
+## Vigilancia
+
+`.github/workflows/vigilancia.yml` visita la web cada 10 minutos (así Render no se duerme) y comprueba que responde y
+que hay guaguas en las próximas horas. Si falla, abre una incidencia con la etiqueta `caida` (GitHub avisa por correo y
+en la app); la cierra sola cuando vuelve a funcionar. GitHub desactiva las tareas programadas si el repo pasa 60 días
+sin cambios: si ocurre, se reactiva en *Actions → Vigilancia → Enable workflow*.
 
 ## Despliegue
 

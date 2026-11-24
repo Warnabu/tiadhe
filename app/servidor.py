@@ -109,7 +109,9 @@ def agrupar(radio_km=0.06, BASE=None):
     grupos = []
     for lat, lon, n, pid, num in pts:
         for gr in grupos:
-            if g.km({"lat": lat, "lon": lon}, gr) <= radio_km:
+            d = g.km({"lat": lat, "lon": lon}, gr)
+            # misma parada física, o la misma parada (mismo nombre) con las marquesinas algo separadas (estaciones)
+            if d <= radio_km or (d <= 0.2 and g.norm(n) in {g.norm(x) for x in gr["nombres"]}):
                 gr["c"] += 1
                 gr["lat"] += (lat - gr["lat"]) / gr["c"]
                 gr["lon"] += (lon - gr["lon"]) / gr["c"]
@@ -239,7 +241,7 @@ def tablero(clave, objetivo, ahora, por_destino=6, modo="dinamico"):
         lista = grupos.setdefault(r["destino"], [])
         if sum(1 for x in lista if x["linea"] == r["linea"]) < 3 and len(lista) < por_destino:
             dif = (r["llegada"] - ahora).total_seconds() / 60
-            lista.append(dict(linea=r["linea"], texto=g.texto_espera(r, ahora), hora=f"{r['llegada']:%H:%M}", minutos=round(dif),
+            lista.append(dict(linea=r["linea"], texto=g.texto_espera(r, ahora), hora=f"{g.llegada_minima(r):%H:%M}", minutos=round(dif),
                            prec=r["prec"], cal=r["cal"], nota=r["nota"], viaje=r["viaje"], n=r["n"],
                            subir=-12 <= dif <= min(20, 12 + 0.25 * r["off"])))  # solo se puede avisar cuando está pasando
     orden = sorted(grupos.items(), key=lambda kv: kv[1][0]["minutos"])
@@ -299,15 +301,227 @@ def api_subida():
     res = COM.enviar_subida(dev, d["viaje"], d["parada"], dict(linea=pred["linea"], sentido=pred["sentido"], variante=pred["variante"],
                             llegada_ts=llegada_ts, pred_ts=llegada_ts, inicio_ts=int(a_ts(pred["inicio"])), off=pred["off"]), dist, int(ahora))
     _cache.clear()
-    msg = ("¡Confirmado! Ya coincidís varias personas y la hora se ha actualizado para los demás." if res["estado"] == "confirmada"
-           else "Anotado. Cuando otras personas confirmen esta guagua, la hora se actualizará."
+    n = pred.get("restantes", 0)
+    paradas = f"{n} parada{'s' if n != 1 else ''} siguiente{'s' if n != 1 else ''}"
+    msg = (f"¡Confirmado! Gracias a ti, quien espera en las {paradas} ya ve la hora real." if res["estado"] == "confirmada"
+           else f"¡Gracias! En cuanto otra persona lo confirme, la hora se corregirá en las {paradas}."
            + ("" if res["gps"] else " (Con la ubicación activada tu aviso pesa más.)"))
-    return jsonify(ok=True, estado=res["estado"], mensaje=msg, perfil=COM.perfil(dev, ahora))
+    _estadisticas.clear()
+    return jsonify(ok=True, estado=res["estado"], mensaje=msg, restantes=n, perfil=COM.perfil(dev, ahora))
+
+
+_estadisticas = {}
+
+
+@app.get("/api/estadisticas")
+def api_estadisticas():
+    """Actividad de hoy en toda la isla (avisos, personas, guaguas confirmadas). Cacheada 1 minuto."""
+    ahora = ahora_ts()
+    if not _estadisticas or ahora - _estadisticas["t"] > 60:
+        _estadisticas.update(t=ahora, d=COM.estadisticas_hoy(ahora))
+    return jsonify(ok=True, **_estadisticas["d"])
+
+
+# ── Líneas y "cómo llegar" ──────────────────────────────────────────────────────────────────────────────────
+_PARADA_DE = {i: pid for pid, gr in PARADAS.items() for i in gr["ids"]}   # id de parada de línea → parada del mapa
+
+
+def nombre_corto(pid):
+    return PARADAS[pid]["nombre"].split(" · L")[0]
+
+
+@app.get("/api/linea/<num>")
+def api_linea(num):
+    """Paradas de una línea en orden (sentido ida) y sus próximas salidas de cabecera en cada sentido."""
+    if num not in BASE:
+        raise Error("línea desconocida", 404)
+    paradas = []
+    for p in BASE[num]["paradas"]:
+        pid = _PARADA_DE.get(p.get("id")) if "opt" not in p else None
+        if pid and (not paradas or paradas[-1]["id"] != pid):
+            paradas.append(dict(id=pid, nombre=nombre_corto(pid)))
+    ahora = ahora_local()
+    salidas = {}
+    for sent in ("ida", "vuelta"):
+        lista = []
+        for dia_off in (0, 1):
+            fecha = (ahora + timedelta(days=dia_off)).date()
+            horas = sorted({x["h"] for x in HORARIOS[num]["salidas"]
+                           if x["s"] == sent and g.tipo_dia(fecha) in x["d"].split(",") and (dia_off or x["h"] >= f"{ahora:%H:%M}")})
+            lista += [h + (" (mañana)" if dia_off else "") for h in horas]
+        salidas[sent] = lista[:5]
+    h = HORARIOS[num]
+    return jsonify(ok=True, num=num, nombre=h["nombre"], color=COLOR[num], origen=h.get("origen"), destino=h.get("destino"),
+                   paradas=paradas, salidas=salidas)
+
+
+@app.get("/api/ruta")
+def api_ruta():
+    """Guaguas directas de la parada 'desde' a la parada 'hasta' en las próximas horas."""
+    o, d = request.args.get("desde", ""), request.args.get("hasta", "")
+    if o not in PARADAS or d not in PARADAS:
+        raise Error("parada desconocida", 404)
+    if o == d:
+        raise Error("el origen y el destino son la misma parada")
+    ahora = ahora_local()
+    go, gd = PARADAS[o], PARADAS[d]
+    opciones = []
+    for r in g.proximas(dict(nombre=go["nombre"], ids=go["ids"]), ahora, HORARIOS, BASE, com=COM, gracia=0, modo=_modo()):
+        t = g.trayecto(r["viaje"], go["ids"], gd["ids"], HORARIOS, BASE)
+        if not t:
+            continue
+        sale = g.llegada_minima(r)
+        llega = r["llegada"] + timedelta(minutes=t[1] - t[0] + g.margenes(r)[1])   # lo más tarde que puede llegar
+        opciones.append(dict(linea=r["linea"], destino=r["destino"], sale=f"{sale:%H:%M}", texto=g.texto_espera(r, ahora),
+                             llega=f"{llega:%H:%M}", duracion=round((llega - sale).total_seconds() / 60),
+                             manana=sale.date() > ahora.date(), nota=r["nota"], prec=r["prec"]))
+        if len(opciones) >= 8:
+            break
+    return jsonify(ok=True, desde=dict(id=o, nombre=nombre_corto(o)), hasta=dict(id=d, nombre=nombre_corto(d)), opciones=opciones)
+
+
+# ── "Avísame 5 min antes" ────────────────────────────────────────────────────────────────────────────────
+MINUTOS_AVISO = 5
+
+
+def _salida(pid, viaje, ahora_l):
+    """La salida 'viaje' tal como la ve ahora la parada pid (con correcciones en vivo), o None si ya pasó."""
+    gr = PARADAS.get(pid)
+    if not gr:
+        return None, None
+    for r in g.proximas(dict(nombre=gr["nombre"], ids=gr["ids"]), ahora_l, HORARIOS, BASE, com=COM, gracia=3, modo="dinamico"):
+        if r["viaje"] == viaje:
+            return r, gr
+    return None, gr
+
+
+@app.get("/api/recordatorios")
+def api_recordatorios():
+    dev = autenticar()
+    return jsonify(ok=True, recordatorios=COM.recordatorios_de(dev))
+
+
+@app.post("/api/recordatorio")
+def api_recordatorio():
+    """Pedir (o cancelar) un aviso push unos minutos antes de que una guagua concreta llegue a una parada."""
+    dev = autenticar()
+    d = request.get_json(silent=True) or {}
+    pid, viaje = str(d.get("parada", ""))[:40], str(d.get("viaje", ""))[:120]
+    if d.get("cancelar"):
+        COM.cancelar_recordatorio(dev, viaje, pid)
+        return jsonify(ok=True, activo=False, mensaje="Aviso cancelado.")
+    if pid not in PARADAS:
+        raise Error("parada desconocida", 404)
+    ahora_l = datetime.now(TZ).replace(tzinfo=None)
+    r, gr = _salida(pid, viaje, ahora_l)
+    if not r:
+        raise Error("esa guagua ya ha pasado o no para aquí")
+    minima = g.llegada_minima(r)
+    if (minima - ahora_l).total_seconds() / 60 <= MINUTOS_AVISO + 1:
+        raise Error("ya está a punto de llegar: ¡ve a la parada!")
+    if not COM.obtener_fcm_token(dev):
+        raise Error("activa las notificaciones para poder avisarte", 409)
+    COM.crear_recordatorio(dev, viaje, pid, MINUTOS_AVISO, ahora_ts())
+    return jsonify(ok=True, activo=True,
+                   mensaje=f"Te avisaremos {MINUTOS_AVISO} min antes de que llegue (hacia las {minima - timedelta(minutes=MINUTOS_AVISO):%H:%M}).")
+
+
+def revisar_recordatorios():
+    """Envía los avisos cuya guagua está a ≤5 min (con la hora más temprana posible, para no llegar tarde)."""
+    ahora, ahora_l = ahora_ts(), datetime.now(TZ).replace(tzinfo=None)
+    for rec in COM.recordatorios_pendientes():
+        r, gr = _salida(rec["parada"], rec["viaje"], ahora_l)
+        if r is None:
+            COM.marcar_recordatorio(rec["dev"], rec["viaje"], rec["parada"], ahora)   # ya pasó
+            continue
+        minima = g.llegada_minima(r)
+        faltan = (minima - ahora_l).total_seconds() / 60
+        if faltan > rec["minutos"]:
+            continue
+        token = COM.obtener_fcm_token(rec["dev"])
+        if token:
+            cuando = "ya mismo" if faltan < 1 else f"en unos {round(faltan)} min"
+            ok, motivo = send_fcm_push(token, f"Línea {r['linea']} → {r['destino']}",
+                                       f"Pasa por {gr['nombre'].split(' · L')[0]} {cuando} (desde las {minima:%H:%M}).",
+                                       data={"url": f"/?parada={rec['parada']}"})
+            if motivo == "token_invalido":
+                COM.borrar_fcm_token(rec["dev"])
+        COM.marcar_recordatorio(rec["dev"], rec["viaje"], rec["parada"], ahora)
+
+
+def _bucle_recordatorios():
+    while True:
+        time.sleep(30)
+        try:
+            revisar_recordatorios()
+        except Exception:
+            app.logger.exception("revisando recordatorios")
+
+
+if os.environ.get("RENDER") or os.environ.get("GUAGUAS_RECORDATORIOS"):   # en producción (un solo proceso de gunicorn)
+    import threading
+    threading.Thread(target=_bucle_recordatorios, daemon=True, name="recordatorios").start()
+
+
+# ── Paradas favoritas (con sesión de Google) ───────────────────────────────────────────────────────────────
+def uid_sesion():
+    cab = request.headers.get("Authorization", "")
+    if not cab.startswith("Bearer "):
+        raise Error("inicia sesión para guardar favoritas", 401)
+    return verify_internal_token(cab[7:])["uid"]
+
+
+@app.get("/api/favoritas")
+def api_favoritas():
+    return jsonify(ok=True, paradas=[p for p in COM.favoritas(uid_sesion()) if p in PARADAS])
+
+
+@app.post("/api/favoritas")
+def api_favoritas_poner():
+    uid = uid_sesion()
+    d = request.get_json(silent=True) or {}
+    pid = str(d.get("parada", ""))[:40]
+    if pid not in PARADAS:
+        raise Error("parada desconocida", 404)
+    COM.poner_favorita(uid, pid, bool(d.get("si", True)), ahora_ts())
+    return jsonify(ok=True, paradas=[p for p in COM.favoritas(uid) if p in PARADAS])
 
 
 @app.get("/")
 def inicio():
-    return app.send_static_file("index.html")
+    """La web, con la vista previa (Open Graph) adaptada si el enlace es de una parada: ?parada=<id>."""
+    from html import escape
+    from flask import Response
+    if "_index" not in _cache_web:
+        _cache_web["_index"] = (RAIZ / "web" / "index.html").read_text(encoding="utf-8")
+    html_ = _cache_web["_index"]
+    base = ("https://" if os.environ.get("RENDER") else request.scheme + "://") + request.host
+    titulo, desc = "Guaguas Fuerteventura", ("Cuándo pasa la guagua por tu parada en Fuerteventura: horarios de todas las "
+                                             "líneas y tiempo real gracias a la comunidad.")
+    url = base + "/"
+    pid = request.args.get("parada", "")
+    if pid in PARADAS:
+        gr = PARADAS[pid]
+        titulo = f"Guaguas en {nombre_corto(pid)}"
+        desc = f"Próximas guaguas de las líneas {', '.join(sorted(gr['lineas']))} en esta parada, con tiempo real."
+        url = f"{base}/?parada={pid}"
+    og = "\n".join([
+        f'<meta name="description" content="{escape(desc)}">',
+        '<meta property="og:type" content="website">',
+        '<meta property="og:site_name" content="Guaguas Fuerteventura">',
+        f'<meta property="og:title" content="{escape(titulo)}">',
+        f'<meta property="og:description" content="{escape(desc)}">',
+        f'<meta property="og:url" content="{escape(url)}">',
+        f'<meta property="og:image" content="{base}/icons/icon-512.png">',
+        '<meta name="twitter:card" content="summary">'])
+    i, j = html_.index("<!--og-->"), html_.index("<!--/og-->") + len("<!--/og-->")
+    html_ = html_[:i] + og + html_[j:]
+    if pid in PARADAS:
+        html_ = html_.replace("<title>Guaguas Fuerteventura</title>", f"<title>{escape(titulo)} · Guaguas FTV</title>", 1)
+    return Response(html_, mimetype="text/html")
+
+
+_cache_web = {}
 
 
 @app.get("/api/paradas")
