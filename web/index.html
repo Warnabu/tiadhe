@@ -94,7 +94,13 @@ button.badge{cursor:pointer}
 .pasos li{padding:3px 0 3px 14px;position:relative}
 .pasos li:before{content:"";position:absolute;left:2px;top:11px;width:6px;height:6px;border-radius:50%;background:var(--c,var(--tx2))}
 .pasos b{color:var(--tx);font-weight:600}
-.elegir{flex-basis:100%;text-align:left;color:var(--acc);font-weight:600;font-size:14px;padding:2px 0}
+.botones{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px 22px}
+.elegir{text-align:left;color:var(--acc);font-weight:600;font-size:14px;padding:2px 0}
+#panel.mini{overflow:hidden;cursor:pointer;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+#panel.mini>:not(.grab):not(#pn):not(#ps):not(#cerrar){display:none}
+#panel.mini #pn{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:40px}
+#panel .grab{cursor:pointer;position:relative}
+#panel .grab:after{content:"";position:absolute;inset:-12px -40px}
 @media (min-width:820px){#panel{left:10px;right:auto;top:124px;bottom:10px;width:392px;max-height:none;border-radius:20px;box-shadow:var(--sh)}#panel .grab{display:none}#panel{padding-top:18px}}
 /* bienvenida */
 #intro{position:fixed;inset:0;z-index:900;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))}
@@ -336,7 +342,7 @@ function elegir(p) {
   if (marcaSel) map.removeLayer(marcaSel);
   marcaSel = L.circleMarker([p.lat, p.lon], { radius: 13, color: '#ff3b30', weight: 3, fill: false }).addTo(map);
   $('pn').textContent = p.nombre; $('ps').textContent = ''; $('lista').innerHTML = '';
-  $('panel').classList.remove('oculto'); $('sug').classList.add('oculto');
+  $('panel').classList.remove('oculto', 'mini'); $('sug').classList.add('oculto');
   cargar(); clearInterval(timer); timer = setInterval(cargar, 30000);
 }
 async function cargar() {
@@ -474,7 +480,7 @@ async function abrirLinea(num) {
     b.onclick = () => { const p = paradas.find(x => x.id === pa.id); if (p) { foco(p); elegir({ tipo: 'parada', ...p }); } };
     l.appendChild(b);
   });
-  $('panel').classList.remove('oculto'); $('panel').scrollTop = 0;
+  $('panel').classList.remove('oculto', 'mini'); $('panel').scrollTop = 0;
 }
 
 // ── Cómo llegar (guaguas directas de A a B) ──
@@ -492,7 +498,33 @@ function quitarCamino() {
   if (marcaYo) marcaYo.addTo(map);
   document.querySelectorAll('#lista .row').forEach(x => { x.style.display = ''; x.querySelector('.yo')?.remove(); });
   document.querySelectorAll('#lista h3').forEach(x => x.style.display = '');
+  document.querySelectorAll('#lista .vermapa').forEach(b => b.remove());
   document.querySelectorAll('#lista .elegir').forEach(b => b.textContent = 'Elegir camino');
+  plegar(false);
+}
+// Panel plegado: queda una barrita abajo (título y resumen) y el mapa se ve entero; tocándola se despliega
+function plegar(si) {
+  const pn = $('panel');
+  if (si === pn.classList.contains('mini')) return;
+  pn.classList.toggle('mini', si);
+  if (si) { pn.scrollTop = 0; pn._ps = $('ps').textContent; if (capaCamino?._resumen) $('ps').textContent = capaCamino._resumen + ' · toca para ver los pasos'; }
+  else if (pn._ps != null) { $('ps').textContent = pn._ps; pn._ps = null; }
+  if (capaCamino) requestAnimationFrame(() => {
+    if (si) map.fitBounds(capaCamino.getBounds(), { paddingTopLeft: [40, ancho() ? 40 : 110], paddingBottomRight: [40, ancho() ? 40 : pn.offsetHeight + 30], maxZoom: 16 });
+    else capaCamino._encuadre?.(capaCamino.getBounds());
+  });
+}
+$('panel').addEventListener('click', e => { if ($('panel').classList.contains('mini') && !e.target.closest('#cerrar')) plegar(false); });
+document.querySelector('#panel .grab').addEventListener('click', e => { e.stopPropagation(); plegar(!$('panel').classList.contains('mini')); });
+// deslizar el panel hacia abajo lo pliega; hacia arriba lo despliega
+{
+  let y0 = null;
+  $('panel').addEventListener('touchstart', e => { y0 = $('panel').scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+  $('panel').addEventListener('touchend', e => {
+    if (y0 == null) return;
+    const dy = e.changedTouches[0].clientY - y0; y0 = null;
+    if (dy > 60) plegar(true); else if (dy < -40) plegar(false);
+  }, { passive: true });
 }
 // Dónde está el usuario, solo si ya dio permiso (no se le pregunta aquí)
 async function dondeEstoy() {
@@ -521,7 +553,7 @@ async function mostrarCamino(camino, fila, pasos, encuadre) {
       const li = document.createElement('li'); li.className = 'yo';
       li.innerHTML = `Camina unos ${Math.max(1, Math.round(m * 1.3 / 70))} min hasta <b>${esc(primera.nombre.split(' · L')[0])}</b>`;
       (pasos || fila).prepend(li);
-      if (!pasos) { const ul = document.createElement('ul'); ul.className = 'pasos yo'; ul.appendChild(li); fila.insertBefore(ul, fila.querySelector('.elegir')); }
+      if (!pasos) { const ul = document.createElement('ul'); ul.className = 'pasos yo'; ul.appendChild(li); fila.insertBefore(ul, fila.querySelector('.botones')); }
     }
   }
   const extremos = new Map();   // parada → color de la guagua que se coge o se deja ahí
@@ -558,7 +590,7 @@ async function verRuta(o, d) {
   };
   encuadre(L.latLngBounds([[o.lat, o.lon], [d.lat, d.lon]]));
   $('pn').textContent = o.nombre + ' → ' + d.nombre; $('ps').textContent = 'Cómo llegar'; $('seg').classList.add('oculto');
-  $('lista').innerHTML = ''; $('nota').textContent = ''; $('panel').classList.remove('oculto');
+  $('lista').innerHTML = ''; $('nota').textContent = ''; $('panel').classList.remove('oculto', 'mini');
   let j; try { j = await json(`/api/ruta?desde=${encodeURIComponent(o.id)}&hasta=${encodeURIComponent(d.id)}&modo=${Guaguas.getModoDinamico() ? 'dinamico' : 'estatico'}`); }
   catch (_) { $('lista').innerHTML = '<p class="vacio">No se pudo calcular. Comprueba tu conexión.</p>'; return; }
   if (actual !== yo) return;
@@ -573,8 +605,17 @@ async function verRuta(o, d) {
       const ok = await mostrarCamino(camino, r, pasos, encuadre);
       if (actual !== yo) return;
       b.textContent = ok ? 'Ver todas las opciones' : 'Elegir camino';
+      if (ok) {   // ver el mapa grande con el camino; tocando el panel plegado se vuelven a ver los pasos
+        const v = document.createElement('button'); v.className = 'elegir vermapa'; v.textContent = 'Ver el mapa';
+        v.onclick = e => { e.stopPropagation(); plegar(true); };
+        bs.appendChild(v);
+        const res = r.querySelector('.when b')?.textContent || '';
+        capaCamino._resumen = [...r.querySelectorAll('.badge')].map(x => x.textContent).join(' › ') + ' · ' + res;
+        capaCamino._encuadre = encuadre;
+      }
     };
-    r.appendChild(b);
+    const bs = document.createElement('div'); bs.className = 'botones';
+    bs.appendChild(b); r.appendChild(bs);
   };
   const l = $('lista');
   if (!j.opciones.length && !j.transbordos.length) { l.innerHTML = '<p class="vacio">No hay forma de llegar en las próximas horas, ni directa ni con transbordos. Prueba con una parada cercana.</p>'; return; }

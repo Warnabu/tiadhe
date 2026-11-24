@@ -1,5 +1,5 @@
 // Service Worker de Guaguas FTV. Súbele la versión en cada despliegue que cambie assets.
-const VERSION = 'v11-2026-11-24-camino';
+const VERSION = 'v12-2026-11-24-plegar';
 const CACHE = 'guaguas-ftv-' + VERSION;
 const ICONOS = ['/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
 const LEAFLET = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
