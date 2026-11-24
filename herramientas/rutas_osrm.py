@@ -41,6 +41,7 @@ VUELTAS = 4
 CONSENSO_DIBUJO_MAX_M = 3500   # … o esto, en las líneas que tuvieron que seguir el dibujo de Tiadhe en algún tramo
 CONSENSO_MAX_M = 1500 # tramo máximo en el que una línea, sola, se separa de las demás y vuelve a juntarse
 MUNON_MAX_M = 400     # un ida y vuelta sin parada más corto que esto es un muñón de un punto guía mal enganchado
+RODEO_MAX_M = 600     # sin_rodeos: diferencia máxima que se corrige (más es un desvío de verdad)
 RODEO_PARADA_M = 80   # entrar hasta una parada pegada a la ruta no puede costar más que esto de rodeo
 MAS_LARGO = 1.4       # un tramo por calles más largo que esto × el dibujo (+150 m) es un rodeo: se usa el dibujo
 
@@ -268,6 +269,9 @@ def sin_rodeos(ruta, paradas, log, otras=()):
             compartidas = sum(any(dist_linea(q, t, rj) < 15 for t, rj in otras) for q in muestras)
             if compartidas >= 0.9 * len(muestras):
                 cortes.append((i0, i1, p0, p1, r, x1 - x0))
+    # solo rodeos pequeños (un lazo, una vuelta a una rotonda que no existe): los grandes son desvíos de verdad a un
+    # pueblo o a una urbanización sin parada en el tramo (línea 11)
+    cortes = [c for c in cortes if c[5] - acumulado(c[4])[-1] <= RODEO_MAX_M and c[5] <= 1.35 * acumulado(c[4])[-1]]
     for i0, i1, p0, p1, r, L in sorted(cortes, reverse=True):
         log(f"  rodeo entre paradas en {p0[0]:.5f},{p0[1]:.5f}: {L:.0f} m → {acumulado(r)[-1]:.0f} m por el camino directo")
         ruta = ruta[:i0] + [p0] + r + [p1] + ruta[i1:]
