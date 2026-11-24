@@ -204,7 +204,9 @@ class Planificador:
                 if sale > limite:
                     break
                 clave = tuple(p.get("viaje") or (p["desde"], p["hasta"]) for p in it)
-                candidatos.setdefault(clave, it)
+                lineas = [p["linea"] for p in it if p["tipo"] == "bus"]
+                if all(x != y for x, y in zip(lineas, lineas[1:])):   # bajarse de la 01 para coger otra 01 confunde
+                    candidatos.setdefault(clave, it)
                 salida = sale + timedelta(minutes=1)
         lista = list(candidatos.values())
         res = [self.resumen(it) for it in lista]
