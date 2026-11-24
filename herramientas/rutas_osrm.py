@@ -408,6 +408,31 @@ def bucle_validado(orig, inicio, punta, fin, largo):
 limpiar_trazados.bucle_original = bucle_validado
 
 
+def pulir(t, paradas, log=None):
+    """Último repaso del trazo: quita espigas (media vuelta en un vértice con tramos cortos, sin parada en la punta) y
+    escalones de pocos metros (saltos entre trazos paralelos del consenso) con una simplificación de 3 m, que no
+    endereza calles ni rotondas."""
+    from ajustar_rutas import douglas_peucker
+    n0 = len(t)
+    def giro(a, b, c):
+        c0 = math.cos(math.radians(b[0]))
+        v1, v2 = ((b[1] - a[1]) * c0, b[0] - a[0]), ((c[1] - b[1]) * c0, c[0] - b[0])
+        n1, n2 = math.hypot(*v1), math.hypot(*v2)
+        return 0 if not n1 or not n2 else math.degrees(math.acos(max(-1, min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))))
+    # una sola pasada y solo puntas cortas: repetirlo se comía desvíos de ida y vuelta de verdad, tramo a tramo
+    res = [t[0]]
+    for i in range(1, len(t) - 1):
+        a, b, c = res[-1], t[i], t[i + 1]
+        if giro(a, b, c) > 160 and m(a, b) < 30 and m(b, c) < 30 and not any(m(b, q) < 25 for q in paradas):
+            continue
+        res.append(b)
+    t = res + [t[-1]]
+    t = douglas_peucker(t, 3.0)
+    if log and n0 - len(t) > 0:
+        log(f"  pulido: {n0} → {len(t)} puntos")
+    return t
+
+
 def informe(num, linea, ruta, orig, log, resto=()):
     paradas = [(p["lat"], p["lon"], p["n"]) for p in linea["paradas"] if "d" not in p]
     partes = [ruta] + list(resto)   # los ramales (2ª parte de la 05 y la 14) también cuentan para las paradas
@@ -443,9 +468,21 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("lineas", nargs="*")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--pulir", action="store_true", help="solo el último repaso (espigas y escalones) sobre los datos actuales")
     a = ap.parse_args(argv)
     f = DATOS / "paradas_reales.json"
     datos = json.loads(f.read_text(encoding="utf-8"))
+    if a.pulir:
+        for num, x in datos.items():
+            if a.lineas and num not in a.lineas:
+                continue
+            print(f"Línea {num}")
+            t = pulir([tuple(q) for q in x["trazado"][0]], [(p["lat"], p["lon"]) for p in x["paradas"]], print)
+            x["trazado"][0] = [[round(la, 6), round(lo, 6)] for la, lo in t]
+        if not a.dry_run:
+            f.write_text(json.dumps(datos, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            print(f"Guardado {f}")
+        return
     originales = json.loads((DATOS / "trazados_originales.json").read_text(encoding="utf-8"))
     resumen = {}
     base = json.loads((DATOS / "lineas_base.json").read_text(encoding="utf-8"))["lineas"]
@@ -517,6 +554,7 @@ def main(argv):
             denso += [(x0[0] + (x1[0] - x0[0]) * i / k, x0[1] + (x1[1] - x0[1]) * i / k) for i in range(1, k + 1)]
         t = unificar(denso, lineas, num, todas, lambda txt, n=num: print(f"  {n}:{txt}"))
         t = [q for i, q in enumerate(t) if i in (0, len(t) - 1) or abs(rumbo(t[i - 1], q) - rumbo(q, t[i + 1])) > 0.5]
+        t = pulir(t, [(p["lat"], p["lon"]) for p in x["paradas"]])
         x["trazado"][0] = [[round(la, 6), round(lo, 6)] for la, lo in t]
     (DATOS / ".cache_osrm" / "informe_rutas.json").write_text(json.dumps(resumen, ensure_ascii=False, indent=1))
     if not a.dry_run:
