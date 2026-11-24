@@ -16,7 +16,7 @@ from flask import Flask, jsonify, request
 from .comunidad import Comunidad, Error, km_ll, mensaje
 
 from . import bandas
-from .planificador import Planificador
+from .planificador import Caminos, Planificador
 from .seguridad import ip_real, proteger
 from . import guaguas as g
 from . import db as pg_db
@@ -326,6 +326,7 @@ def api_estadisticas():
 # ── Líneas y "cómo llegar" ──────────────────────────────────────────────────────────────────────────────────
 _PARADA_DE = {i: pid for pid, gr in PARADAS.items() for i in gr["ids"]}   # id de parada de línea → parada del mapa
 PLAN = Planificador(HORARIOS, BASE, _PARADA_DE, PARADAS)   # cómo llegar con transbordos
+CAMINOS = Caminos(BASE, _PARADA_DE, PARADAS)                 # el camino elegido, dibujado en el mapa
 
 
 def nombre_corto(pid):
@@ -376,7 +377,8 @@ def api_ruta():
         llega = r["llegada"] + timedelta(minutes=t[1] - t[0] + g.margenes(r)[1])   # lo más tarde que puede llegar
         opciones.append(dict(linea=r["linea"], destino=r["destino"], sale=f"{sale:%H:%M}", texto=g.texto_espera(r, ahora),
                              llega=f"{llega:%H:%M}", duracion=round((llega - sale).total_seconds() / 60),
-                             manana=sale.date() > ahora.date(), nota=r["nota"], prec=r["prec"]))
+                             manana=sale.date() > ahora.date(), nota=r["nota"], prec=r["prec"],
+                             camino=[[r["linea"], r["viaje"].split("|")[2], o, d]]))
         if len(opciones) >= 8:
             break
     # Con transbordo: si no hay directa, o si cambiando de guagua se llega antes que con la primera directa
@@ -388,6 +390,8 @@ def api_ruta():
         if len(buses) < 2 or (primera and buses[-1]["llega"] >= primera):
             continue
         pasos, prev = [], None
+        camino = [["pie", p["desde"], p["hasta"]] if p["tipo"] == "pie" else [p["linea"], p["viaje"].split("|")[2], p["desde"], p["hasta"]]
+                  for p in it]
         for p in it:
             if p["tipo"] == "pie":
                 pasos.append(dict(tipo="pie", desde=nombre_corto(p["desde"]), hasta=nombre_corto(p["hasta"]), minutos=p["minutos"]))
@@ -399,11 +403,35 @@ def api_ruta():
             prev = p
         transbordos.append(dict(sale=f"{buses[0]['sale']:%H:%M}", llega=f"{buses[-1]['llega']:%H:%M}",
                                 manana=buses[0]["sale"].date() > ahora.date(), transbordos=len(buses) - 1,
-                                duracion=round((buses[-1]["llega"] - buses[0]["sale"]).total_seconds() / 60), pasos=pasos))
+                                duracion=round((buses[-1]["llega"] - buses[0]["sale"]).total_seconds() / 60), pasos=pasos,
+                                camino=camino))
         if len(transbordos) >= 3:
             break
     return jsonify(ok=True, desde=dict(id=o, nombre=nombre_corto(o)), hasta=dict(id=d, nombre=nombre_corto(d)),
                    opciones=opciones, transbordos=transbordos)
+
+
+@app.get("/api/camino")
+def api_camino():
+    """Dibujo de un camino de /api/ruta: t = JSON [[línea, sentido, desde, hasta] | ["pie", desde, hasta], …]."""
+    try:
+        t = json.loads(request.args.get("t", ""))
+        assert isinstance(t, list) and 1 <= len(t) <= 6 and all(isinstance(x, list) for x in t)
+    except (ValueError, AssertionError):
+        raise Error("camino no válido")
+    res = []
+    for x in t:
+        if len(x) == 3 and x[0] == "pie" and x[1] in PARADAS and x[2] in PARADAS:
+            a, b = PARADAS[x[1]], PARADAS[x[2]]
+            res.append(dict(tipo="pie", p=[[[a["lat"], a["lon"]], [b["lat"], b["lon"]]]], paradas=[x[1], x[2]]))
+        elif len(x) == 4 and x[0] in BASE and x[1] in ("ida", "vuelta") and x[2] in PARADAS and x[3] in PARADAS:
+            tr = CAMINOS.tramo(x[0], x[1], x[2], x[3])
+            if not tr:
+                raise Error("esa línea no va de una parada a la otra", 404)
+            res.append(dict(tipo="bus", linea=x[0], color=COLOR[x[0]], **tr))
+        else:
+            raise Error("camino no válido")
+    return jsonify(ok=True, tramos=res)
 
 
 # ── "Avísame 5 min antes" ────────────────────────────────────────────────────────────────────────────────

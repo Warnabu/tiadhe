@@ -16,7 +16,7 @@ MAX_CUERPO = 32 * 1024   # ninguna petición legítima de la app pasa de unos ci
 LIMITES = {
     "escritura": (30, 60),      # POST /api/* (registro, subida, token FCM…)
     "token": (10, 60),          # POST /api/firebase-token (cada una es una verificación en Google)
-    "cerca": (60, 60),          # GET /api/cerca (calcula horarios para cualquier punto)
+    "cerca": (60, 60),          # GET /api/cerca, /api/ruta, /api/camino (cálculos de horarios y caminos)
     "auth": (60, 60),           # proxy de Firebase Auth /__/auth/*
 }
 
@@ -99,7 +99,7 @@ def _grupo():
         return "auth"
     if p == "/api/firebase-token":
         return "token"
-    if p == "/api/cerca":
+    if p in ("/api/cerca", "/api/ruta", "/api/camino"):
         return "cerca"
     if p.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS"):
         return "escritura"

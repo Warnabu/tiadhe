@@ -132,6 +132,30 @@ check(all(b["sale"] >= a["llega"] + timedelta(minutes=MIN_TRANSBORDO) for it in 
 j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
 check(j["transbordos"] == [], "Puerto → Morro Jable: con directas no propone dar vueltas")
 
+# --- elegir camino: en el mapa solo el trozo de cada línea que se usa
+import json as _json
+def camino(t):
+    r = c.get("/api/camino?t=" + _json.dumps(t))
+    return r.status_code, r.get_json()
+st, jc = camino(j["opciones"][0]["camino"])
+tr = jc["tramos"][0]
+ini, fin = tr["p"][0][0], tr["p"][-1][-1]
+check(st == 200 and tr["paradas"][0] == pid_est and tr["paradas"][-1] == mj, f"directa: de la estación a Morro Jable, {len(tr['paradas'])} paradas")
+check(g.km(dict(lat=ini[0], lon=ini[1]), s.PARADAS[pid_est]) < 0.15 and g.km(dict(lat=fin[0], lon=fin[1]), s.PARADAS[mj]) < 0.15,
+      "el dibujo empieza en la parada de subida y acaba en la de bajada")
+jt = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()["transbordos"][0]
+st, jc = camino(jt["camino"])
+buses = [x for x in jc["tramos"] if x["tipo"] == "bus"]
+check(st == 200 and len(buses) == jt["transbordos"] + 1,
+      f"transbordo: {len(buses)} trozos de línea ({', '.join(x['linea'] for x in buses)})")
+ok_union = all(g.km(dict(lat=x["p"][-1][-1][0], lon=x["p"][-1][-1][1]), dict(lat=y["p"][0][0][0], lon=y["p"][0][0][1])) < 0.4
+               for x, y in zip(jc["tramos"], jc["tramos"][1:]))
+check(ok_union, "cada trozo empieza donde acaba el anterior (o a un paseo corto)")
+largo = sum(g.km(dict(lat=a_[0], lon=a_[1]), dict(lat=b_[0], lon=b_[1])) for x in buses for parte in x["p"] for a_, b_ in zip(parte, parte[1:]))
+check(largo < 150, f"no dibuja las líneas enteras: {largo:.0f} km de recorrido")
+check(camino([["01", "ida", mj, pid_est]])[0] == 404, "un sentido que no va de una parada a la otra: 404")
+check(camino("x")[0] == 400 and c.get("/api/camino?t=[[1,2]]").status_code == 400, "camino mal formado: 400")
+
 # --- estadísticas y vista previa
 j = c.get("/api/estadisticas").get_json()
 check(j["ok"] and {"avisos", "personas", "confirmadas"} <= set(j), f"estadísticas de hoy: {j}")

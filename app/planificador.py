@@ -157,3 +157,100 @@ class Planificador:
                 buenas.append(it)
         buenas.sort(key=lambda it: resumen(it)[:2])
         return buenas[:n]
+
+
+# ---------------------------------------------------------------------- el camino en el mapa
+class Caminos:
+    """Trozo exacto del trazado de una línea entre la parada donde se sube y la parada donde se baja."""
+
+    def __init__(self, base, parada_de, paradas):
+        self.base, self.paradas = base, paradas
+        self.de_linea = {}        # (línea, parada del mapa) → [índices de parada de la línea]
+        for lid, pid in parada_de.items():
+            num, i = lid.rsplit(":", 1)
+            self.de_linea.setdefault((num, pid), []).append(int(i))
+        self.inv = {(n, j): pid for (n, pid), idx in self.de_linea.items() for j in idx}
+        self._geo = {}
+
+    def _geometria(self, num):
+        """Puntos del trazado en metros (plano local) con su distancia acumulada."""
+        if num not in self._geo:
+            l = self.base[num]
+            tr = l.get("trazado") or [[[p["lat"], p["lon"]] for p in l["paradas"] if "opt" not in p]]
+            pts, acc, ini = [], 0.0, set()
+            for parte in tr:
+                ini.add(len(pts))
+                for j, (la, lo) in enumerate(parte):
+                    if j:
+                        acc += g.km(dict(lat=parte[j - 1][0], lon=parte[j - 1][1]), dict(lat=la, lon=lo))
+                    pts.append((la, lo, acc))
+            total_k = max((p.get("k", 0) for p in l["paradas"]), default=0) or acc
+            self._geo[num] = (pts, ini, acc / total_k if total_k else 1.0)
+        return self._geo[num]
+
+    def _proyectar(self, num, lat, lon, k):
+        """Posición (km a lo largo del trazado) de un punto, buscando cerca de donde dice su km 'k'."""
+        pts, ini, esc = self._geometria(num)
+        cx = math.cos(math.radians(lat)) * 111.32
+        mejor = None
+        for i in range(1, len(pts)):
+            if i in ini:
+                continue
+            (a0, o0, d0), (a1, o1, d1) = pts[i - 1], pts[i]
+            ax, ay, bx, by = (o0 - lon) * cx, (a0 - lat) * 110.57, (o1 - lon) * cx, (a1 - lat) * 110.57
+            vx, vy = bx - ax, by - ay
+            l2 = vx * vx + vy * vy
+            t = 0.0 if l2 < 1e-12 else max(0.0, min(1.0, -(ax * vx + ay * vy) / l2))
+            dist = math.hypot(ax + t * vx, ay + t * vy)
+            pos = d0 + t * (d1 - d0)
+            coste = dist + (0 if k is None else 0.1 * max(0.0, abs(pos - k * esc) - 1.5))   # mismo sitio, pero en su vuelta
+            if mejor is None or coste < mejor[0]:
+                mejor = (coste, pos)
+        return mejor[1] if mejor else 0.0
+
+    def _cortar(self, num, p0, p1):
+        """Puntos del trazado entre dos posiciones (en el orden del viaje), en trozos si el trazado tiene saltos."""
+        pts, ini, _ = self._geometria(num)
+        a, b = min(p0, p1), max(p0, p1)
+        trozos, cur = [], []
+        for i in range(1, len(pts)):
+            if i in ini:
+                if cur:
+                    trozos.append(cur)
+                cur = []
+                continue
+            (la0, lo0, d0), (la1, lo1, d1) = pts[i - 1], pts[i]
+            if d1 < a or d0 > b or d1 == d0:
+                continue
+            en = lambda x: [round(la0 + (x - d0) / (d1 - d0) * (la1 - la0), 6), round(lo0 + (x - d0) / (d1 - d0) * (lo1 - lo0), 6)]
+            if not cur:
+                cur.append(en(max(a, d0)))
+            cur.append(en(min(b, d1)))
+        if cur:
+            trozos.append(cur)
+        trozos = [t for t in trozos if len(t) >= 2]
+        if p1 < p0:
+            trozos = [t[::-1] for t in trozos[::-1]]
+        return trozos
+
+    def tramo(self, num, sentido, desde, hasta):
+        """{'p': [[[lat, lon]…]…], 'paradas': [ids del mapa por las que pasa]} del viaje de 'desde' a 'hasta'."""
+        ps = self.base[num]["paradas"]
+        ia_, ib_ = self.de_linea.get((num, desde), []), self.de_linea.get((num, hasta), [])
+        pares = [(ia, ib) for ia in ia_ for ib in ib_
+                 if (ps[ib]["k"] > ps[ia]["k"]) == (sentido == "ida") and ps[ib]["k"] != ps[ia]["k"]]
+        if not pares:
+            return None
+        ia, ib = min(pares, key=lambda x: abs(ps[x[1]]["k"] - ps[x[0]]["k"]))
+        ka, kb = ps[ia]["k"], ps[ib]["k"]
+        p0 = self._proyectar(num, ps[ia]["lat"], ps[ia]["lon"], ka)
+        p1 = self._proyectar(num, ps[ib]["lat"], ps[ib]["lon"], kb)
+        lo_, hi_ = min(ka, kb), max(ka, kb)
+        medio = sorted((i for i, x in enumerate(ps) if "opt" not in x and lo_ < x["k"] < hi_),
+                       key=lambda i: ps[i]["k"], reverse=sentido != "ida")
+        por = []
+        for x in [ia] + medio + [ib]:
+            pid = self.inv.get((num, x))
+            if pid and pid not in por:
+                por.append(pid)
+        return dict(p=self._cortar(num, p0, p1), paradas=por, i=(ia, ib))

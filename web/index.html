@@ -94,6 +94,7 @@ button.badge{cursor:pointer}
 .pasos li{padding:3px 0 3px 14px;position:relative}
 .pasos li:before{content:"";position:absolute;left:2px;top:11px;width:6px;height:6px;border-radius:50%;background:var(--c,var(--tx2))}
 .pasos b{color:var(--tx);font-weight:600}
+.elegir{flex-basis:100%;text-align:left;color:var(--acc);font-weight:600;font-size:14px;padding:2px 0}
 @media (min-width:820px){#panel{left:10px;right:auto;top:124px;bottom:10px;width:392px;max-height:none;border-radius:20px;box-shadow:var(--sh)}#panel .grab{display:none}#panel{padding-top:18px}}
 /* bienvenida */
 #intro{position:fixed;inset:0;z-index:900;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))}
@@ -258,6 +259,7 @@ mq.addEventListener('change', tema); tema();
 addEventListener('resize', () => map.invalidateSize());
 
 // ── Datos ──
+let marcasParadas = [], capaCamino = null;
 let paradas = [], lugares = [], colores = {}, rutas = {}, actual = null, filtro = null, timer = null, marcaSel = null, marcaYo = null, marcadas = new Set();
 async function datos() {
   const [lineas, ps, osm, lug] = await Promise.all([json('/api/lineas?bandas=1'), json('/api/paradas'), json('/api/osm'), json('/api/lugares')]);
@@ -267,10 +269,10 @@ async function datos() {
     rutas[l.num] = l.tramos.map(t => { const c = L.polyline(t.p, { color: l.color, weight: 3.5, opacity: .75, interactive: false }); c._base = t.p; c._o = t.o; return c.addTo(map); });
   });
   recolocar();
-  osm.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
-    .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon })));
-  ps.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
-    .on('click', () => elegir({ tipo: 'parada', ...p })));
+  osm.forEach(p => marcasParadas.push(L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
+    .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon }))));
+  ps.forEach(p => marcasParadas.push(L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
+    .on('click', () => elegir({ tipo: 'parada', ...p }))));
 }
 function foco(p, z = 15) {
   map.setView([p.lat, p.lon], Math.max(map.getZoom(), z), { animate: false });
@@ -317,6 +319,7 @@ function enlace(p) {
   history.replaceState(null, '', u.pathname + u.search + u.hash);
 }
 function elegir(p) {
+  quitarCamino();
   if (rutaDesde && p.tipo === 'parada' && p.id !== rutaDesde.id) return verRuta(rutaDesde, p);
   actual = p; filtro = null; marcadas = new Set();
   acciones(p);
@@ -416,7 +419,7 @@ function pintar(d, p) {
   $('nota').textContent = ds.length > 1 ? 'Hay guaguas en los dos sentidos: elige el de tu destino.' : '';
   if (p.tipo === 'parada' && Guaguas.getModoDinamico()) actividad().then(t => { if (p === actual && t) $('nota').textContent += ($('nota').textContent ? ' ' : '') + t; });
 }
-$('cerrar').onclick = () => { $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); resaltar(null); enlace(null); finRuta(); };
+$('cerrar').onclick = () => { quitarCamino(); $('panel').classList.add('oculto'); clearInterval(timer); actual = null; if (marcaSel) map.removeLayer(marcaSel); resaltar(null); enlace(null); finRuta(); };
 
 // ── Barra de acciones de una parada: favorita (con sesión), cómo llegar, compartir ──
 let favs = new Set();
@@ -448,7 +451,7 @@ async function cargarFavoritas() {
 $('lista').addEventListener('click', e => { const b = e.target.closest('button.badge[data-linea]'); if (b) abrirLinea(b.dataset.linea); });
 async function abrirLinea(num) {
   let d; try { d = await json('/api/linea/' + encodeURIComponent(num)); } catch (_) { return toast('No se pudo cargar la línea.'); }
-  finRuta(); clearInterval(timer); enlace(null);
+  finRuta(); clearInterval(timer); enlace(null); quitarCamino();
   actual = { tipo: 'linea', num }; acciones(actual);
   if (marcaSel) map.removeLayer(marcaSel);
   resaltar([num]);
@@ -482,18 +485,97 @@ function empezarRuta(p) {
   toast('Busca la parada de destino (o tócala en el mapa).', 5000);
 }
 function finRuta() { rutaDesde = null; $('buscar').placeholder = 'Buscar parada o lugar'; }
+function quitarCamino() {
+  if (!capaCamino) return;
+  map.removeLayer(capaCamino); capaCamino = null;
+  marcasParadas.forEach(m => m.addTo(map));
+  if (marcaYo) marcaYo.addTo(map);
+  document.querySelectorAll('#lista .row').forEach(x => { x.style.display = ''; x.querySelector('.yo')?.remove(); });
+  document.querySelectorAll('#lista h3').forEach(x => x.style.display = '');
+  document.querySelectorAll('#lista .elegir').forEach(b => b.textContent = 'Elegir camino');
+}
+// Dónde está el usuario, solo si ya dio permiso (no se le pregunta aquí)
+async function dondeEstoy() {
+  if (marcaYo) return marcaYo.getLatLng();
+  try {
+    if (!navigator.permissions || (await navigator.permissions.query({ name: 'geolocation' })).state !== 'granted') return null;
+    return await new Promise(ok => navigator.geolocation.getCurrentPosition(p => ok(L.latLng(p.coords.latitude, p.coords.longitude)), () => ok(null), { timeout: 6000, maximumAge: 120000 }));
+  } catch (_) { return null; }
+}
+async function mostrarCamino(camino, fila, pasos, encuadre) {
+  let j; try { j = await json('/api/camino?t=' + encodeURIComponent(JSON.stringify(camino))); } catch (_) { toast('No se pudo dibujar el camino.'); return false; }
+  const yo = await dondeEstoy();
+  quitarCamino();
+  Object.values(rutas).forEach(cs => cs.forEach(c => c.setStyle({ opacity: 0 })));
+  marcasParadas.forEach(m => map.removeLayer(m));
+  if (marcaSel) map.removeLayer(marcaSel);
+  const capa = L.featureGroup(), par = id => paradas.find(p => p.id === id);
+  const pie = lls => L.polyline(lls, { color: '#5f6b7a', weight: 4, dashArray: '1 9', lineCap: 'round', interactive: false }).addTo(capa);
+  const primera = par(j.tramos[0].paradas[0]);
+  // de donde estás a la primera parada (si estás cerca: a más de 3 km no tiene sentido ir andando)
+  if (yo && primera) {
+    const m = yo.distanceTo([primera.lat, primera.lon]);
+    if (m > 30 && m < 3000) {
+      pie([yo, [primera.lat, primera.lon]]);
+      L.circleMarker(yo, { radius: 8, color: '#fff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1, interactive: false }).addTo(capa);
+      const li = document.createElement('li'); li.className = 'yo';
+      li.innerHTML = `Camina unos ${Math.max(1, Math.round(m * 1.3 / 70))} min hasta <b>${esc(primera.nombre.split(' · L')[0])}</b>`;
+      (pasos || fila).prepend(li);
+      if (!pasos) { const ul = document.createElement('ul'); ul.className = 'pasos yo'; ul.appendChild(li); fila.insertBefore(ul, fila.querySelector('.elegir')); }
+    }
+  }
+  const extremos = new Map();   // parada → color de la guagua que se coge o se deja ahí
+  j.tramos.forEach(t => {
+    if (t.tipo === 'pie') { pie(t.p[0]); return; }
+    t.p.forEach(lls => {
+      L.polyline(lls, { color: '#fff', weight: 9, opacity: .9, interactive: false }).addTo(capa);
+      L.polyline(lls, { color: t.color, weight: 6, opacity: 1, interactive: false }).addTo(capa);
+    });
+    t.paradas.slice(1, -1).forEach(id => { const p = par(id); if (p) L.circleMarker([p.lat, p.lon], { radius: 4, color: t.color, weight: 2, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(p.nombre).addTo(capa); });
+    [t.paradas[0], t.paradas.at(-1)].forEach(id => extremos.has(id) || extremos.set(id, t.color));
+  });
+  const fin = j.tramos.at(-1).paradas.at(-1);
+  extremos.forEach((c, id) => {
+    const p = par(id); if (!p) return;
+    L.circleMarker([p.lat, p.lon], { radius: id === fin ? 10 : 8, color: id === fin ? '#ff3b30' : '#fff', weight: 3, fillColor: c, fillOpacity: 1 })
+      .bindTooltip(p.nombre, { permanent: id === fin || id === primera?.id, direction: 'top', offset: [0, -8] })
+      .on('click', () => { foco(p); elegir({ tipo: 'parada', ...p }); }).addTo(capa);
+  });
+  capaCamino = capa.addTo(map);
+  [...fila.parentElement.children].forEach(x => { if (x !== fila) x.style.display = 'none'; });   // solo la opción elegida
+  encuadre(capa.getBounds());
+  return true;
+}
 async function verRuta(o, d) {
-  finRuta(); clearInterval(timer); enlace(null);
+  finRuta(); clearInterval(timer); enlace(null); quitarCamino();
   actual = { tipo: 'ruta' }; acciones(actual);
   const yo = actual;
   if (marcaSel) map.removeLayer(marcaSel);
-  map.fitBounds(L.latLngBounds([[o.lat, o.lon], [d.lat, d.lon]]), { paddingTopLeft: [40, 40], paddingBottomRight: [40, ancho() ? 40 : Math.round(innerHeight * .5)], maxZoom: 15 });
+  // encuadre en la parte del mapa que el panel no tapa (en el móvil el panel ocupa la parte de abajo)
+  const encuadre = b => {
+    const abajo = ancho() ? 40 : Math.min(innerHeight - 260, Math.max(innerHeight * .5, innerHeight - $('panel').getBoundingClientRect().top) + 24);
+    map.fitBounds(b, { paddingTopLeft: [40, ancho() ? 40 : 110], paddingBottomRight: [40, Math.round(abajo)], maxZoom: 16 });
+  };
+  encuadre(L.latLngBounds([[o.lat, o.lon], [d.lat, d.lon]]));
   $('pn').textContent = o.nombre + ' → ' + d.nombre; $('ps').textContent = 'Cómo llegar'; $('seg').classList.add('oculto');
   $('lista').innerHTML = ''; $('nota').textContent = ''; $('panel').classList.remove('oculto');
   let j; try { j = await json(`/api/ruta?desde=${encodeURIComponent(o.id)}&hasta=${encodeURIComponent(d.id)}&modo=${Guaguas.getModoDinamico() ? 'dinamico' : 'estatico'}`); }
   catch (_) { $('lista').innerHTML = '<p class="vacio">No se pudo calcular. Comprueba tu conexión.</p>'; return; }
   if (actual !== yo) return;
-  resaltar([...new Set([...j.opciones.map(x => x.linea), ...j.transbordos.flatMap(t => t.pasos.filter(p => p.tipo === 'bus').map(p => p.linea))])]);
+  const todas = [...new Set([...j.opciones.map(x => x.linea), ...j.transbordos.flatMap(t => t.pasos.filter(p => p.tipo === 'bus').map(p => p.linea))])];
+  resaltar(todas);
+  // «Elegir camino»: en el mapa queda solo ese camino (los trozos de línea que se usan, las paradas y lo que se camina)
+  const boton = (r, camino, pasos) => {
+    const b = document.createElement('button'); b.className = 'elegir'; b.textContent = 'Elegir camino';
+    b.onclick = async () => {
+      if (capaCamino) { quitarCamino(); resaltar(todas); encuadre(L.latLngBounds([[o.lat, o.lon], [d.lat, d.lon]])); return; }
+      b.textContent = 'Cargando…';
+      const ok = await mostrarCamino(camino, r, pasos, encuadre);
+      if (actual !== yo) return;
+      b.textContent = ok ? 'Ver todas las opciones' : 'Elegir camino';
+    };
+    r.appendChild(b);
+  };
   const l = $('lista');
   if (!j.opciones.length && !j.transbordos.length) { l.innerHTML = '<p class="vacio">No hay forma de llegar en las próximas horas, ni directa ni con transbordos. Prueba con una parada cercana.</p>'; return; }
   const titulo = t => { const h = document.createElement('h3'); h.textContent = t; l.appendChild(h); };
@@ -509,7 +591,7 @@ async function verRuta(o, d) {
       ol.innerHTML = t.pasos.map(p => p.tipo === 'pie'
         ? `<li>Camina ${p.minutos} min hasta <b>${esc(p.hasta)}</b></li>`
         : `<li style="--c:${esc(colores[p.linea] || '#555')}">${p.espera != null ? `Cambia (espera ${p.espera} min): coge` : 'Coge'} la <b>${esc(p.linea)}</b> en <b>${esc(p.desde)}</b> a las ${esc(p.sale)} y bájate en <b>${esc(p.hasta)}</b> (antes de las ${esc(p.llega)})</li>`).join('');
-      r.appendChild(ol); l.appendChild(r);
+      r.appendChild(ol); boton(r, t.camino, ol); l.appendChild(r);
     });
   }
   if (j.opciones.length && j.transbordos.length) titulo('Directas');
@@ -518,7 +600,7 @@ async function verRuta(o, d) {
     const r = document.createElement('div'); r.className = 'row';
     r.innerHTML = `<button class="badge" data-linea="${esc(x.linea)}" style="background:${esc(colores[x.linea] || '#555')}">${esc(x.linea)}</button>
       <div class="when"><b>${esc(sale)}</b><small>Llega antes de las ${esc(x.llega)} · ${x.duracion} min${x.nota ? ' · ' + esc(x.nota) : ''}</small></div>`;
-    l.appendChild(r);
+    boton(r, x.camino, null); l.appendChild(r);
   });
   $('nota').textContent = 'Horas de salida: lo más pronto que puede pasar. Horas de llegada: lo más tarde. En los transbordos se dejan al menos 5 min de margen.';
 }

@@ -60,6 +60,8 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
 - **Cómo llegar** de una parada a otra: guaguas directas y, si no hay o se llega antes, combinaciones con hasta 2
   transbordos (`app/planificador.py`), dejando al menos 5 min entre lo más tarde que llega una y lo más pronto que
   sale la otra.
+  Con **Elegir camino** el mapa muestra solo ese camino: el trozo exacto de cada línea (de la parada donde te subes a
+  la que te bajas), sus paradas y lo que hay que andar (desde donde estás, si diste permiso de ubicación).
 - **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
 
 ## Vigilancia
