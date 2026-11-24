@@ -112,6 +112,26 @@ check(o["llega"] > o["sale"] or o["manana"], "llega después de salir")
 j2 = c.get(f"/api/ruta?desde={mj}&hasta={pid_est}").get_json()
 check(all(x["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
 
+# --- cómo llegar con transbordos
+from app.planificador import MIN_TRANSBORDO
+tui = next(k_ for k_, v in s.PARADAS.items() if "tuineje" in v["nombre"].lower() and "16" in v["lineas"])
+cot = next(k_ for k_, v in s.PARADAS.items() if "cotillo" in v["nombre"].lower() and "08" in v["lineas"])
+j = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()
+check(not j["opciones"] and j["transbordos"], f"Tuineje → El Cotillo: sin directa, {len(j['transbordos'])} opciones con transbordo")
+bien = True
+for t in j["transbordos"]:
+    buses = [p for p in t["pasos"] if p["tipo"] == "bus"]
+    bien &= t["transbordos"] == len(buses) - 1 >= 1 and buses[0]["sale"] == t["sale"] and buses[-1]["llega"] == t["llega"]
+    bien &= all(p["espera"] is None or p["espera"] >= MIN_TRANSBORDO for p in buses)
+check(bien, f"cada transbordo deja ≥{MIN_TRANSBORDO} min (contando lo más tarde que llega y lo más pronto que sale)")
+check(any(any("puerto" in p.get("hasta", "").lower() for p in t["pasos"]) for t in j["transbordos"]), "propone cambiar en Puerto del Rosario")
+its = s.PLAN.itinerarios(tui, cot, datetime(2026, 11, 24, 6, 0))
+check(all(b["sale"] >= a["llega"] + timedelta(minutes=MIN_TRANSBORDO) for it in its
+          for a, b in zip([p for p in it if p["tipo"] == "bus"], [p for p in it if p["tipo"] == "bus"][1:])),
+      f"planificador: {len(its)} itinerarios con margen real en los cambios")
+j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
+check(j["transbordos"] == [], "Puerto → Morro Jable: con directas no propone dar vueltas")
+
 # --- estadísticas y vista previa
 j = c.get("/api/estadisticas").get_json()
 check(j["ok"] and {"avisos", "personas", "confirmadas"} <= set(j), f"estadísticas de hoy: {j}")

@@ -12,6 +12,7 @@ app/             lo que corre en producción
   comunidad.py     avisos "me he subido": firmas, consenso, reputación, aprendizaje
   db.py            PostgreSQL (SQLite en local)
   bandas.py        líneas en paralelo donde comparten calle
+  planificador.py  cómo llegar con transbordos
   seguridad.py     cabeceras HTTP, IP real detrás del proxy, límite de peticiones por IP
 web/             la web (PWA): index.html, cliente.js, sw.js
 datos/           horarios, paradas y trazados — qué es cada archivo en datos/README.md
@@ -56,7 +57,9 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
   para las paradas siguientes. El panel muestra la actividad del día para animar a avisar.
 - **Avísame 5 min antes** (notificación push, aunque la web esté cerrada).
 - **Ver una línea** (tocando su número): recorrido, próximas salidas y paradas.
-- **Cómo llegar** de una parada a otra con guaguas directas.
+- **Cómo llegar** de una parada a otra: guaguas directas y, si no hay o se llega antes, combinaciones con hasta 2
+  transbordos (`app/planificador.py`), dejando al menos 5 min entre lo más tarde que llega una y lo más pronto que
+  sale la otra.
 - **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
 
 ## Vigilancia

@@ -16,6 +16,7 @@ from flask import Flask, jsonify, request
 from .comunidad import Comunidad, Error, km_ll, mensaje
 
 from . import bandas
+from .planificador import Planificador
 from .seguridad import ip_real, proteger
 from . import guaguas as g
 from . import db as pg_db
@@ -324,6 +325,7 @@ def api_estadisticas():
 
 # ── Líneas y "cómo llegar" ──────────────────────────────────────────────────────────────────────────────────
 _PARADA_DE = {i: pid for pid, gr in PARADAS.items() for i in gr["ids"]}   # id de parada de línea → parada del mapa
+PLAN = Planificador(HORARIOS, BASE, _PARADA_DE, PARADAS)   # cómo llegar con transbordos
 
 
 def nombre_corto(pid):
@@ -377,7 +379,31 @@ def api_ruta():
                              manana=sale.date() > ahora.date(), nota=r["nota"], prec=r["prec"]))
         if len(opciones) >= 8:
             break
-    return jsonify(ok=True, desde=dict(id=o, nombre=nombre_corto(o)), hasta=dict(id=d, nombre=nombre_corto(d)), opciones=opciones)
+    # Con transbordo: si no hay directa, o si cambiando de guagua se llega antes que con la primera directa
+    primera = min((datetime.strptime(x["llega"], "%H:%M").replace(year=ahora.year, month=ahora.month, day=ahora.day)
+                   + timedelta(days=1 if x["manana"] else 0) for x in opciones[:3]), default=None)
+    transbordos = []
+    for it in PLAN.itinerarios(o, d, ahora):
+        buses = [p for p in it if p["tipo"] == "bus"]
+        if len(buses) < 2 or (primera and buses[-1]["llega"] >= primera):
+            continue
+        pasos, prev = [], None
+        for p in it:
+            if p["tipo"] == "pie":
+                pasos.append(dict(tipo="pie", desde=nombre_corto(p["desde"]), hasta=nombre_corto(p["hasta"]), minutos=p["minutos"]))
+                continue
+            espera = round((p["sale"] - prev["llega"]).total_seconds() / 60) if prev else None
+            pasos.append(dict(tipo="bus", linea=p["linea"], destino=p["destino"], desde=nombre_corto(p["desde"]),
+                              hasta=nombre_corto(p["hasta"]), sale=f"{p['sale']:%H:%M}", llega=f"{p['llega']:%H:%M}",
+                              espera=espera, nota=p["nota"]))
+            prev = p
+        transbordos.append(dict(sale=f"{buses[0]['sale']:%H:%M}", llega=f"{buses[-1]['llega']:%H:%M}",
+                                manana=buses[0]["sale"].date() > ahora.date(), transbordos=len(buses) - 1,
+                                duracion=round((buses[-1]["llega"] - buses[0]["sale"]).total_seconds() / 60), pasos=pasos))
+        if len(transbordos) >= 3:
+            break
+    return jsonify(ok=True, desde=dict(id=o, nombre=nombre_corto(o)), hasta=dict(id=d, nombre=nombre_corto(d)),
+                   opciones=opciones, transbordos=transbordos)
 
 
 # ── "Avísame 5 min antes" ────────────────────────────────────────────────────────────────────────────────

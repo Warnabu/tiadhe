@@ -87,6 +87,13 @@ button.badge{cursor:pointer}
 .pl i{width:10px;height:10px;border-radius:50%;flex:none;border:2px solid var(--bg);box-shadow:0 0 0 2px var(--c)}
 .horas{font-size:14px;line-height:1.5;padding:8px 0}
 .horas b{font-weight:600}
+.trb{display:flex;align-items:center;gap:3px}
+.trb .badge{min-width:34px;height:26px;font-size:13px;border-radius:8px;padding:0 6px}
+.trb span{color:var(--tx2);font-size:12px}
+.pasos{flex-basis:100%;margin:-4px 0 0;padding:0 0 0 2px;list-style:none;font-size:13.5px;line-height:1.5;color:var(--tx2)}
+.pasos li{padding:3px 0 3px 14px;position:relative}
+.pasos li:before{content:"";position:absolute;left:2px;top:11px;width:6px;height:6px;border-radius:50%;background:var(--c,var(--tx2))}
+.pasos b{color:var(--tx);font-weight:600}
 @media (min-width:820px){#panel{left:10px;right:auto;top:124px;bottom:10px;width:392px;max-height:none;border-radius:20px;box-shadow:var(--sh)}#panel .grab{display:none}#panel{padding-top:18px}}
 /* bienvenida */
 #intro{position:fixed;inset:0;z-index:900;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left))}
@@ -481,14 +488,31 @@ async function verRuta(o, d) {
   const yo = actual;
   if (marcaSel) map.removeLayer(marcaSel);
   map.fitBounds(L.latLngBounds([[o.lat, o.lon], [d.lat, d.lon]]), { paddingTopLeft: [40, 40], paddingBottomRight: [40, ancho() ? 40 : Math.round(innerHeight * .5)], maxZoom: 15 });
-  $('pn').textContent = o.nombre + ' → ' + d.nombre; $('ps').textContent = 'Guaguas directas'; $('seg').classList.add('oculto');
+  $('pn').textContent = o.nombre + ' → ' + d.nombre; $('ps').textContent = 'Cómo llegar'; $('seg').classList.add('oculto');
   $('lista').innerHTML = ''; $('nota').textContent = ''; $('panel').classList.remove('oculto');
   let j; try { j = await json(`/api/ruta?desde=${encodeURIComponent(o.id)}&hasta=${encodeURIComponent(d.id)}&modo=${Guaguas.getModoDinamico() ? 'dinamico' : 'estatico'}`); }
   catch (_) { $('lista').innerHTML = '<p class="vacio">No se pudo calcular. Comprueba tu conexión.</p>'; return; }
   if (actual !== yo) return;
-  resaltar([...new Set(j.opciones.map(x => x.linea))]);
+  resaltar([...new Set([...j.opciones.map(x => x.linea), ...j.transbordos.flatMap(t => t.pasos.filter(p => p.tipo === 'bus').map(p => p.linea))])]);
   const l = $('lista');
-  if (!j.opciones.length) { l.innerHTML = '<p class="vacio">No hay guaguas directas entre estas paradas en las próximas horas. Prueba con una parada cercana o con un transbordo (por ejemplo en Puerto del Rosario o Gran Tarajal).</p>'; return; }
+  if (!j.opciones.length && !j.transbordos.length) { l.innerHTML = '<p class="vacio">No hay forma de llegar en las próximas horas, ni directa ni con transbordos. Prueba con una parada cercana.</p>'; return; }
+  const titulo = t => { const h = document.createElement('h3'); h.textContent = t; l.appendChild(h); };
+  if (j.transbordos.length) {
+    titulo(j.opciones.length ? 'Con transbordo (llegas antes)' : 'Con transbordo');
+    j.transbordos.forEach(t => {
+      const buses = t.pasos.filter(p => p.tipo === 'bus');
+      const r = document.createElement('div'); r.className = 'row';
+      const dur = t.duracion >= 60 ? `${Math.floor(t.duracion / 60)} h ${t.duracion % 60} min` : `${t.duracion} min`;
+      r.innerHTML = `<div class="trb">${buses.map(p => `<button class="badge" data-linea="${esc(p.linea)}" style="background:${esc(colores[p.linea] || '#555')}">${esc(p.linea)}</button>`).join('<span>›</span>')}</div>
+        <div class="when"><b>Sale a las ${esc(t.sale)}${t.manana ? ' (mañana)' : ''}</b><small>Llega antes de las ${esc(t.llega)} · ${dur} · ${t.transbordos} transbordo${t.transbordos > 1 ? 's' : ''}</small></div>`;
+      const ol = document.createElement('ul'); ol.className = 'pasos';
+      ol.innerHTML = t.pasos.map(p => p.tipo === 'pie'
+        ? `<li>Camina ${p.minutos} min hasta <b>${esc(p.hasta)}</b></li>`
+        : `<li style="--c:${esc(colores[p.linea] || '#555')}">${p.espera != null ? `Cambia (espera ${p.espera} min): coge` : 'Coge'} la <b>${esc(p.linea)}</b> en <b>${esc(p.desde)}</b> a las ${esc(p.sale)} y bájate en <b>${esc(p.hasta)}</b> (antes de las ${esc(p.llega)})</li>`).join('');
+      r.appendChild(ol); l.appendChild(r);
+    });
+  }
+  if (j.opciones.length && j.transbordos.length) titulo('Directas');
   j.opciones.forEach(x => {
     const sale = /^\d/.test(x.texto) ? 'Sale a las ' + x.texto : 'Sale ' + x.texto;
     const r = document.createElement('div'); r.className = 'row';
@@ -496,7 +520,7 @@ async function verRuta(o, d) {
       <div class="when"><b>${esc(sale)}</b><small>Llega antes de las ${esc(x.llega)} · ${x.duracion} min${x.nota ? ' · ' + esc(x.nota) : ''}</small></div>`;
     l.appendChild(r);
   });
-  $('nota').textContent = 'Horas de salida: lo más pronto que puede pasar. Horas de llegada: lo más tarde.';
+  $('nota').textContent = 'Horas de salida: lo más pronto que puede pasar. Horas de llegada: lo más tarde. En los transbordos se dejan al menos 5 min de margen.';
 }
 
 // ── Búsqueda y ubicación ──
