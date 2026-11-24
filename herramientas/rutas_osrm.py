@@ -226,6 +226,24 @@ def trazar(pts, t, acc, sentido):
                     saltados += pts[i + 1:j]
                     i, hecho = j, True
                     break
+            if not hecho and a_["parada"] and len(ruta) > 2:
+                # parada en un fondo de saco (Hotel Gorriones): la guagua da la vuelta y deshace el camino por el que
+                # entró hasta un punto desde el que se puede seguir por calles
+                b_ = pts[i + 1]
+                atras, L = [ruta[-1]], 0.0
+                for q in reversed(ruta[:-1]):
+                    L += m(atras[-1], q)
+                    atras.append(q)
+                    if L > 1500:
+                        break
+                    if L < 60 or len(atras) % 3:
+                        continue
+                    r = osrm([(q[0], q[1], rumbo(atras[-2], q), 30),
+                              (b_["p"][0], b_["p"][1], None if b_.get("libre") else sentido(b_["x"]), 60 if b_["parada"] else 80)])
+                    if r and m(r[0], q) < 20 and L + acumulado(r)[-1] <= MAS_LARGO * (b_["x"] - a_["x"]) + 2 * L + 150:
+                        ruta += atras[1:] + r[1:]
+                        i, hecho = i + 1, True
+                        break
             if not hecho:
                 fallo = i
                 break
