@@ -101,28 +101,42 @@ def send_fcm_push(token: str, title: str, body: str, data: dict = None):
         return False, "fallo_fcm"
 
 
-def agrupar(radio_km=0.06, BASE=None):
-    """Une las paradas (de cualquier línea) a menos de ~60 m: una parada física con sus dos sentidos
-    es un único punto del mapa. Se conservan los ids de cada parada concreta de cada línea."""
+def agrupar(radio_km=0.015, BASE=None, HORARIOS=None):
+    """Une en un punto del mapa las paradas (de cualquier línea) que están en el mismo sitio (≤ 15 m; ≤ 60 m si no se
+    sabe su sentido), y las del mismo
+    nombre a ≤ 200 m (marquesinas de una estación) si no son de sentidos contrarios. Las paradas de una acera y de la
+    de enfrente quedan separadas: cada una muestra su sentido. Se conservan los ids de cada parada de cada línea."""
     if BASE is None:
         BASE = globals().get('BASE', {})
-    pts = sorted((p["lat"], p["lon"], p["n"], p["id"], num) for num, l in BASE.items() for p in l["paradas"])
+    if HORARIOS is None:
+        HORARIOS = globals().get('HORARIOS', {})
+    pts = sorted((p["lat"], p["lon"], p["n"], p["id"], num, p.get("solo")) for num, l in BASE.items() for p in l["paradas"])
     grupos = []
-    for lat, lon, n, pid, num in pts:
+    for lat, lon, n, pid, num, solo in pts:
         for gr in grupos:
             d = g.km({"lat": lat, "lon": lon}, gr)
-            # misma parada física, o la misma parada (mismo nombre) con las marquesinas algo separadas (estaciones)
-            if d <= radio_km or (d <= 0.2 and g.norm(n) in {g.norm(x) for x in gr["nombres"]}):
+            contrarios = solo and gr["solos"] and solo not in gr["solos"]
+            sin_sentido = not solo and not gr["solos"]   # sin sentido conocido: como antes, una sola parada a ≤ 60 m
+            if (d <= radio_km and not contrarios) or (sin_sentido and d <= 0.06) or (d <= 0.2 and not contrarios and g.norm(n) in {g.norm(x) for x in gr["nombres"]}
+                                                     and (not solo) == (not gr["solos"])):
                 gr["c"] += 1
                 gr["lat"] += (lat - gr["lat"]) / gr["c"]
                 gr["lon"] += (lon - gr["lon"]) / gr["c"]
                 gr["ids"].add(pid); gr["nombres"].append(n); gr["lineas"].add(num)
+                gr["hacia"].append(HORARIOS.get(num, {}).get("destino" if solo == "ida" else "origen") if solo else None)
+                if solo:
+                    gr["solos"].add(solo)
                 break
         else:
-            grupos.append(dict(lat=lat, lon=lon, c=1, ids={pid}, nombres=[n], lineas={num}))
+            grupos.append(dict(lat=lat, lon=lon, c=1, ids={pid}, nombres=[n], lineas={num}, solos={solo} if solo else set(),
+                               hacia=[HORARIOS.get(num, {}).get("destino" if solo == "ida" else "origen") if solo else None]))
     res = {}
     for gr in grupos:
         gr["nombre"] = Counter(gr["nombres"]).most_common(1)[0][0]
+        hacia = [h for h in gr.pop("hacia") if h]
+        if hacia and len(gr["solos"]) == 1:   # parada de un solo sentido: hacia dónde van sus guaguas
+            gr["nombre"] += " → " + Counter(hacia).most_common(1)[0][0]
+        gr["solos"] = sorted(gr["solos"])
     rep = Counter(gr["nombre"] for gr in grupos)
     for gr in grupos:  # nombres repetidos: se distinguen por las líneas que pasan (y por nº si aún coinciden)
         if rep[gr["nombre"]] > 1:

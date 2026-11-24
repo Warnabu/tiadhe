@@ -233,7 +233,11 @@ def calcular(num, linea, orig, log, antes=None):
         if d > 300:
             d, x = proyectar(t, acc, (p["lat"], p["lon"]))
         pos.append(x)
-    quitar = paradas_de_ida(paradas, pos, t, acc, log)
+    # las paradas de vuelta (según Tiadhe, herramientas/colocar_paradas.py) no marcan el trazo de ida; para las que no
+    # tienen sentido se deduce por el lado de la calle
+    quitar = {i for i, p in enumerate(paradas) if p.get("solo") == "vuelta"}
+    sin_sentido = [i for i, p in enumerate(paradas) if not p.get("solo")]
+    quitar |= {sin_sentido[k] for k in paradas_de_ida([paradas[i] for i in sin_sentido], [pos[i] for i in sin_sentido], t, acc, log)}
     def sentido(x):
         a, _ = punto_en(t, acc, x - 25)
         b, _ = punto_en(t, acc, x + 25)
@@ -280,8 +284,8 @@ def calcular(num, linea, orig, log, antes=None):
         faltan = set()
         for i, p in enumerate(paradas):
             q = (p["lat"], p["lon"])
-            if i in forzadas or dist_linea(q, ruta, rjr) <= 30:
-                continue
+            if i in forzadas or i in quitar or dist_linea(q, ruta, rjr) <= 30:
+                continue   # (las de vuelta están en la otra acera o en otra calle: no se fuerzan)
             if rj_antes is not None and dist_linea(q, antes, rj_antes) > 30:
                 continue   # tampoco estaba en la línea antes: dato dudoso, no se fuerza
             pareja = [j for j in range(len(paradas)) if j != i and abs(pos[i] - pos[j]) < 150

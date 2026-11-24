@@ -167,6 +167,8 @@ def recorrido(linea, sentido, salida, base):
         i0, i1 = 0, len(pts) - 1
     res = []
     for i, p in enumerate(pts):
+        if p.get("solo") and p["solo"] != sentido:
+            continue   # parada de la otra acera: esta guagua no para ahí
         if i0 <= i <= i1:
             r = {**p, "km": abs(kms[i] - kms[i0]), "i": i - i0}
             if ts:

@@ -142,9 +142,13 @@ o = jp["opciones"][0]
 check(jp["desde"]["nombre"] == "Mi casa" and o["pasos"][0]["tipo"] == "pie" and o["pasos"][0]["salir"] <= o["sale"],
       f"desde un punto: «camina {o['pasos'][0]['minutos']} min hasta {o['pasos'][0]['hasta']} (sal a las {o['pasos'][0]['salir']})»")
 check(o["camino"][0][1].startswith("@"), "el camino empieza en el punto")
-jcb = c.get(f"/api/ruta?desde={cb}&hasta={aj}").get_json()
-check(buses_de(jcb["opciones"][0])[0]["desde"] != s.nombre_corto(cb) and jcb["opciones"][0]["pasos"][0]["tipo"] == "pie",
-      f"desde una parada sin la guagua buena, propone andar a la de al lado ({buses_de(jcb['opciones'][0])[0]['desde']})")
+# (a una hora fija: a ciertas horas sí hay una guagua directa desde Corral Blanco)
+P_cb = s.PARADAS[cb]
+origen_cb = {cb: 0, **{k: v for k, v in s.PLAN.alrededor(P_cb["lat"], P_cb["lon"], s.RADIO_PARADA).items() if k != cb}}
+it_cb = s.PLAN.itinerarios(origen_cb, aj, datetime(2026, 11, 25, 7, 30))[0]
+primera = next(p for p in it_cb if p["tipo"] == "bus")
+check(primera["desde"] != cb and it_cb[0]["tipo"] == "pie",
+      f"desde una parada sin la guagua buena, propone andar a la de al lado ({s.nombre_corto(primera['desde'])})")
 its = s.PLAN.itinerarios(s.PLAN.alrededor(28.3285, -14.0470, 1500, 3), aj, datetime(2026, 11, 25, 7, 30))
 lat_min = min(s.PARADAS[p["hasta"]]["lat"] for it in its for p in it if p["tipo"] == "bus")
 check(its and lat_min > 28.1, f"Tuineje → Ajuy cambia de guagua en cuanto puede (no baja a Morro Jable para volver): {s.nombre_corto([p for p in its[0] if p['tipo'] == 'bus'][0]['hasta'])}")
