@@ -237,6 +237,43 @@ def trazar(pts, t, acc, sentido):
             por_dibujo.add(fallo)
 
 
+def sin_rodeos(ruta, paradas, log, otras=()):
+    """Entre dos paradas seguidas, si el trazo es mucho más largo que el camino directo por calles (con el sentido de la
+    marcha), se usa el directo: los puntos guía del dibujo de Tiadhe a veces obligan a dar vueltas que la guagua no da
+    (la «rotonda» dibujada junto al Hotel Gorriones en la 05)."""
+    acc = acumulado(ruta)
+    pos = []
+    for q in paradas:
+        d, x = min(((proyectar_seg(q, ruta[i], ruta[i + 1])[0], acc[i] + proyectar_seg(q, ruta[i], ruta[i + 1])[1] * (acc[i + 1] - acc[i]))
+                    for i in range(len(ruta) - 1) if abs(ruta[i][0] - q[0]) < 0.01 and abs(ruta[i][1] - q[1]) < 0.01),
+                   default=(1e9, 0))
+        if d < 40 and (not pos or x > pos[-1][0]):
+            pos.append((x, q))
+    cortes = []
+    for (x0, a), (x1, b) in zip(pos, pos[1:]):
+        if x1 - x0 < 300:
+            continue
+        p0, i0 = punto_en(ruta, acc, x0)
+        p1, i1 = punto_en(ruta, acc, x1)
+        rumbo0 = rumbo(punto_en(ruta, acc, x0 - 20)[0], punto_en(ruta, acc, x0 + 20)[0])
+        rumbo1 = rumbo(punto_en(ruta, acc, x1 - 20)[0], punto_en(ruta, acc, x1 + 20)[0])
+        r = osrm([(p0[0], p0[1], rumbo0, 30), (p1[0], p1[1], rumbo1, 30)])
+        if r and acumulado(r)[-1] * 1.3 + 200 < x1 - x0 and m(r[0], p0) < 20 and m(r[-1], p1) < 20:
+            cortes.append((i0, i1, p0, p1, r, x1 - x0))
+            continue
+        # sin forzar el sentido de llegada: si es más corto y es el camino que hacen otras líneas, ese es
+        r = osrm([(p0[0], p0[1], rumbo0, 30), (p1[0], p1[1], None, 30)])
+        if r and acumulado(r)[-1] + 50 < x1 - x0 and m(r[0], p0) < 20 and m(r[-1], p1) < 20 and otras:
+            muestras = [r[k] for k in range(0, len(r), max(1, len(r) // 40))]
+            compartidas = sum(any(dist_linea(q, t, rj) < 15 for t, rj in otras) for q in muestras)
+            if compartidas >= 0.9 * len(muestras):
+                cortes.append((i0, i1, p0, p1, r, x1 - x0))
+    for i0, i1, p0, p1, r, L in sorted(cortes, reverse=True):
+        log(f"  rodeo entre paradas en {p0[0]:.5f},{p0[1]:.5f}: {L:.0f} m → {acumulado(r)[-1]:.0f} m por el camino directo")
+        ruta = ruta[:i0] + [p0] + r + [p1] + ruta[i1:]
+    return ruta
+
+
 def calcular(num, linea, orig, log, antes=None):
     t = [tuple(p) for p in orig]
     acc = acumulado(t)
@@ -417,6 +454,10 @@ def main(argv):
             # cadena convertía las curvas de la C. Crisálida en una recta por el campo)
             if len(ruta) == n0:
                 break
+        otras = [(t, rejilla_de(t)) for n2, x in datos.items() if n2 != num and x.get("trazado")
+                 for t in [[tuple(q) for q in x["trazado"][0]]]]
+        ruta = sin_rodeos(ruta, [(p["lat"], p["lon"]) for p in sorted(l["paradas"], key=lambda p: p["k"])
+                                 if "d" not in p and p.get("solo") != "vuelta"], print, otras)
         resto = [[tuple(p) for p in x] for x in tr_antes[1:]]
         resumen[num] = informe(num, l, ruta, partes[0], print, resto)
         # k de cada parada sobre el trazo, en la escala de tiempos oficial

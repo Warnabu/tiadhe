@@ -120,7 +120,7 @@ directas = [o_ for o_ in j["opciones"] if not o_["transbordos"]]
 check(directas and all(buses_de(o_)[0]["linea"] in ("01", "10", "15") for o_ in directas), f"Puerto → Morro Jable: {len(directas)} guaguas directas")
 check(all(o_["transbordos"] == 0 for o_ in j["opciones"]), "con directas no propone transbordos para llegar igual o más tarde")
 o = j["opciones"][0]
-check(o["llega"] > o["sale"] or o["manana"], "llega después de salir")
+check(o["duracion"] > 0, "llega después de salir")  # (las horas solas no sirven: puede pasar de medianoche)
 j2 = c.get(f"/api/ruta?desde={mj}&hasta={pid_est}").get_json()
 check(all(buses_de(x)[0]["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
 

@@ -81,6 +81,14 @@ def cargar():
     for num, l in base.items():
         for i, p in enumerate(l["paradas"]):
             p["id"] = f"{num}:{i}"
+        # cabeceras (primera y última parada): ahí la guagua llega y vuelve a salir en el otro sentido, así que valen
+        # para los dos aunque el mapa de Tiadhe las ponga en una sola capa (Arriba Parque, Muelle Jet Foil…)
+        normales = [p for p in l["paradas"] if "opt" not in p and "d" not in p]
+        if normales:
+            k0, k1 = min(p["k"] for p in normales), max(p["k"] for p in normales)
+            for p in normales:
+                if p.get("solo") and p["k"] in (k0, k1):
+                    p.pop("solo")
     _RECORRIDOS.clear()
     return horarios, base
 
