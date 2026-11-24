@@ -47,6 +47,8 @@ ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE
 python herramientas/importar_mapas.py      # mapas de Google → datos/trazados_originales.json
 python herramientas/ajustar_rutas.py       # los pega a las calles reales → datos/paradas_reales.json
 python herramientas/limpiar_trazados.py    # quita rodeos fuera de la calle, ramales y picos que deja el ajuste
+python herramientas/paradas_mapa.py        # paradas tal como las pinta el mapa (icono del bus) → datos/paradas_mapa.json
+python herramientas/colocar_paradas.py     # cada parada a su icono del mapa, con su sentido (capas Ida/Vuelta de Tiadhe)
 python herramientas/rutas_osrm.py          # cada línea, un trazo continuo por sus paradas (OSRM) — lo que se publica
 python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectura)
 ```
@@ -66,6 +68,8 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
   pronto que sale la otra, y cambiando de guagua en la primera parada en la que se pueda (sin rodeos).
   Con **Elegir camino** el mapa muestra solo ese camino: el trozo exacto de cada línea (de la parada donde te subes a
   la que te bajas), sus paradas y lo que hay que andar (desde donde estás, si diste permiso de ubicación).
+- **Paradas en su sitio y por sentido**: cada parada está donde el mapa pinta la parada; donde hay una en cada acera
+  son dos puntos y cada uno muestra solo las guaguas de su sentido (el nombre dice hacia dónde van).
 - **Ver una sola línea**: botón «Líneas» bajo el buscador; deja en el mapa solo esa línea y sus paradas (se recuerda).
 - **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
 

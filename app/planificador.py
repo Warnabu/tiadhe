@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from . import guaguas as g
 
 MIN_TRANSBORDO = 5      # minutos
+MAX_ESPERA = 120        # espera máxima en un transbordo (minutos)
 MAX_TRAMOS = 3          # guaguas por itinerario (2 transbordos)
 CAMINAR_M = 300         # caminata máxima entre dos paradas para un transbordo
 VEL_PIE = 70            # metros por minuto (≈4 km/h)
@@ -146,33 +147,44 @@ class Planificador:
         return self._cambiar_antes(pasos)
 
     def _cambiar_antes(self, pasos):
-        """Entre dos guaguas seguidas, cambiar en la primera parada común en la que dé tiempo (con el margen).
+        """Entre dos guaguas seguidas, cambiar en la primera parada en la que dé tiempo (con el margen): la misma parada
+        o la de enfrente / una cercana andando (las paradas de cada acera son puntos distintos del mapa).
 
         La búsqueda sube a la segunda guagua en cuanto puede, y eso a veces hace seguir en la primera hasta su final
         para volver luego en la otra (Tuineje → Morro Jable → Ajuy). Cambiando antes se llega a la misma hora y se
         evita el rodeo."""
-        for i in range(len(pasos) - 1):
-            a, b = pasos[i], pasos[i + 1]
-            if a["tipo"] != "bus" or b["tipo"] != "bus":
-                continue
+        buses = [k for k, p in enumerate(pasos) if p["tipo"] == "bus"]
+        res, k0 = [], 0
+        for x, y in zip(buses, buses[1:]):
+            a, b = pasos[x], pasos[y]
             pa, pb = self._paradas_viaje.get(a["viaje"]), self._paradas_viaje.get(b["viaje"])
-            if not pa or not pb:
+            if not pa or not pb or any(p["tipo"] != "pie" for p in pasos[x + 1:y]):
                 continue
-            ia = next((k for k, x in enumerate(pa) if x[0] == a["desde"]), None)
-            ib_fin = next((k for k, x in enumerate(pb) if x[0] == b["hasta"] and x[1] > b["sale_est"]), None)
+            ia = next((k for k, q in enumerate(pa) if q[0] == a["desde"]), None)
+            ib_fin = next((k for k, q in enumerate(pb) if q[0] == b["hasta"] and q[1] > b["sale_est"]), None)
             if ia is None or ib_fin is None:
                 continue
             de_b = {}
-            for x in pb[:ib_fin]:
-                de_b.setdefault(x[0], x)
+            for q in pb[:ib_fin]:
+                de_b.setdefault(q[0], q)
             for pid, est, _, tarde in pa[ia + 1:]:
-                x = de_b.get(pid)
-                if x and tarde + timedelta(minutes=MIN_TRANSBORDO) <= x[2] or pid == a["hasta"]:
-                    if pid != a["hasta"]:
-                        a.update(hasta=pid, llega=tarde, llega_est=est)
-                        b.update(desde=pid, sale=x[2], sale_est=x[1])
+                if pid == a["hasta"]:
                     break
-        return pasos
+                opciones = [(0, pid)] + [(t, v) for v, t in self.vecinas.get(pid, [])]
+                hecho = None
+                for t, pidb in sorted(opciones):
+                    q = de_b.get(pidb)
+                    if q and tarde + timedelta(minutes=t + MIN_TRANSBORDO) <= q[2]:
+                        hecho = (t, pidb, q)
+                        break
+                if hecho:
+                    t, pidb, q = hecho
+                    a.update(hasta=pid, llega=tarde, llega_est=est)
+                    b.update(desde=pidb, sale=q[2], sale_est=q[1])
+                    res += pasos[k0:x + 1] + ([dict(tipo="pie", desde=pid, hasta=pidb, minutos=t)] if t else [])
+                    k0 = y
+                    break
+        return res + pasos[k0:]
 
     @staticmethod
     def resumen(it):
@@ -196,7 +208,7 @@ class Planificador:
         candidatos = {}
         for k in range(1, MAX_TRAMOS + 1):
             salida = ahora
-            for _ in range(n + 2):
+            for _ in range(n + 6):
                 it = self._buscar(conns, origenes, destinos, salida, k)
                 if not it:
                     break
@@ -205,9 +217,14 @@ class Planificador:
                     break
                 clave = tuple(p.get("viaje") or (p["desde"], p["hasta"]) for p in it)
                 lineas = [p["linea"] for p in it if p["tipo"] == "bus"]
-                if all(x != y for x, y in zip(lineas, lineas[1:])):   # bajarse de la 01 para coger otra 01 confunde
+                bs = [p for p in it if p["tipo"] == "bus"]
+                larga = next(((x, y) for x, y in zip(bs, bs[1:]) if y["sale"] - x["llega"] > timedelta(minutes=MAX_ESPERA)), None)
+                if all(x != y for x, y in zip(lineas, lineas[1:])) and not larga:
                     candidatos.setdefault(clave, it)
                 salida = sale + timedelta(minutes=1)
+                if larga:   # nadie espera horas (o toda la noche) a otra guagua: buscar saliendo más tarde
+                    x, y = larga
+                    salida = max(salida, y["sale"] - timedelta(minutes=MAX_ESPERA) - (x["llega"] - sale))
         lista = list(candidatos.values())
         res = [self.resumen(it) for it in lista]
         buenas = [it for it, r0 in zip(lista, res)

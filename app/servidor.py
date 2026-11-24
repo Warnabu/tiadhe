@@ -135,7 +135,9 @@ def agrupar(radio_km=0.015, BASE=None, HORARIOS=None):
         gr["nombre"] = Counter(gr["nombres"]).most_common(1)[0][0]
         hacia = [h for h in gr.pop("hacia") if h]
         if hacia and len(gr["solos"]) == 1:   # parada de un solo sentido: hacia dónde van sus guaguas
-            gr["nombre"] += " → " + Counter(hacia).most_common(1)[0][0]
+            dest = Counter(hacia).most_common(1)[0][0]
+            if not set(g.norm(dest).split()) & set(g.norm(gr["nombre"]).split()):   # «Ayto. Tuineje → Tuineje», no
+                gr["nombre"] += " → " + dest
         gr["solos"] = sorted(gr["solos"])
     rep = Counter(gr["nombre"] for gr in grupos)
     for gr in grupos:  # nombres repetidos: se distinguen por las líneas que pasan (y por nº si aún coinciden)

@@ -45,12 +45,13 @@ def lado(t, p):
     return d if (b[1] - a[1]) * c * (p[0] - a[0]) - (b[0] - a[0]) * (p[1] - a[1]) * c > 0 else -d
 
 
-def sentidos_tiadhe(num):
-    """{nombre: [(lat, lon, {'ida', 'vuelta'})]} según las capas del mapa de Tiadhe (None si no está descargado)."""
+def sentidos_tiadhe(num, origen=None, destino=None):
+    """{nombre: [(lat, lon, {'ida', 'vuelta'})]} según las capas del mapa de Tiadhe (None si no está descargado).
+    Si la capa «Paradas Ida» de Tiadhe empieza en nuestro destino (línea 11: su ida es nuestra vuelta), se invierte."""
     f = DATOS / ".cache_osrm" / "kml" / f"{num}.kml"
     if not f.exists():
         return None
-    puntos = {}
+    puntos, primera = {}, {}
     for carpeta in ET.parse(f).getroot().iter():
         if not carpeta.tag.endswith("Folder"):
             continue
@@ -63,9 +64,14 @@ def sentidos_tiadhe(num):
                 continue
             n = (next((c.text for c in pm if c.tag.endswith("name")), "") or "").strip()
             co = next((c.text for c in pm.iter() if c.tag.endswith("coordinates")), None)
-            if co:
+            if co and len(co.strip().split()) == 1:
                 lo, la = map(float, co.strip().split(",")[:2])
                 puntos.setdefault((n, round(la, 5), round(lo, 5)), set()).add(s)
+                primera.setdefault(s, (la, lo))
+    invertir = bool(origen and destino and "ida" in primera and m(primera["ida"], destino) < m(primera["ida"], origen))
+    if invertir:
+        print(f"  línea {num}: la «ida» de Tiadhe empieza en nuestro destino → se invierten sus sentidos")
+        puntos = {k: {"vuelta" if x == "ida" else "ida" for x in v} for k, v in puntos.items()}
     res = {}
     for (n, la, lo), ss in puntos.items():
         res.setdefault(n, []).append((la, lo, ss))
@@ -88,7 +94,8 @@ def main(argv):
                 p["lat"], p["lon"] = p.pop("lat0"), p.pop("lon0")
             p.pop("solo", None)
         t = [tuple(x) for x in l["trazado"][0]]
-        tiadhe = sentidos_tiadhe(num)
+        ps0 = sorted((p for p in l["paradas"] if "d" not in p), key=lambda p: p["k"])
+        tiadhe = sentidos_tiadhe(num, (ps0[0]["lat"], ps0[0]["lon"]), (ps0[-1]["lat"], ps0[-1]["lon"]))
         if tiadhe is None:
             print(f"  línea {num}: falta su mapa de Tiadhe (sin sentidos)")
         usados, nuevas, est = set(), [], dict(movidas=0, separadas=0, solo=0, sin=0)

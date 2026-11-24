@@ -41,6 +41,7 @@ VUELTAS = 4
 CONSENSO_DIBUJO_MAX_M = 3500   # … o esto, en las líneas que tuvieron que seguir el dibujo de Tiadhe en algún tramo
 CONSENSO_MAX_M = 1500 # tramo máximo en el que una línea, sola, se separa de las demás y vuelve a juntarse
 MUNON_MAX_M = 400     # un ida y vuelta sin parada más corto que esto es un muñón de un punto guía mal enganchado
+RODEO_PARADA_M = 80   # entrar hasta una parada pegada a la ruta no puede costar más que esto de rodeo
 MAS_LARGO = 1.4       # un tramo por calles más largo que esto × el dibujo (+150 m) es un rodeo: se usa el dibujo
 
 
@@ -188,6 +189,21 @@ def trazar(pts, t, acc, sentido):
                 i += 1
                 continue
             hecho = False
+            def pt(q, sin_sentido=False):
+                return (q["p"][0], q["p"][1], None if (sin_sentido or q.get("libre")) else sentido(q["x"]), 60 if q["parada"] else 80)
+            if i + 2 < len(pts) and pts[i + 1]["parada"] and not pts[i + 1].get("libre"):
+                # parada a la que solo se llega dando un rodeo (p. ej. una vía de servicio en La Ampuyenta) y que queda
+                # junto a la ruta directa: la línea sigue recta (la parada no cambia, solo no se dibuja la entrada)
+                rd = osrm([pt(a_), pt(pts[i + 2])])
+                r1, r2 = osrm([pt(a_), pt(pts[i + 1])]), osrm([pt(pts[i + 1]), pt(pts[i + 2])])
+                if rd and r1 and r2 and acumulado(r1)[-1] + acumulado(r2)[-1] > acumulado(rd)[-1] + RODEO_PARADA_M \
+                        and dist_linea(pts[i + 1]["p"], rd, rejilla_de(rd)) < 40 \
+                        and acumulado(rd)[-1] <= MAS_LARGO * (pts[i + 2]["x"] - a_["x"]) + 150 \
+                        and not (ruta and m(ruta[-1], rd[0]) > 20):
+                    ruta += rd if not ruta else rd[1:]
+                    saltados.append(pts[i + 1])
+                    i += 2
+                    continue
             for j in range(i + 1, min(i + 4, len(pts))):
                 b_ = pts[j]
                 ini = (a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80)

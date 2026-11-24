@@ -58,9 +58,9 @@ check(lo <= 25 - g.margenes(r)[0], f"rango: «{g.texto_espera(r, ahora)}» (empi
 check(g.margenes(dict(prec="oficial"))[0] == 0, "hora oficial de cabecera sin margen")
 
 # --- paradas fusionadas: la estación es una sola
-est = [v for v in s.PARADAS.values() if v["nombre"].lower().startswith("estacion puerto")]
+est = [v for v in s.PARADAS.values() if v["nombre"].split(" → ")[0].lower().startswith("estacion puerto")]
 check(len(est) == 1 and len(est[0]["lineas"]) >= 8, f"la estación de Puerto es una sola parada con {len(est[0]['lineas']) if est else 0} líneas")
-pid_est = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].lower().startswith("estacion puerto"))
+pid_est = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].split(" → ")[0].lower().startswith("estacion puerto"))
 
 # --- avísame 5 min antes
 ahora_l = datetime.now(s.TZ).replace(tzinfo=None)
@@ -99,12 +99,20 @@ check(j["paradas"] == [pid_est], "guardar favorita")
 j = c.post("/api/favoritas", json={"parada": pid_est, "si": False}, headers={"Authorization": "Bearer " + tok}).get_json()
 check(j["paradas"] == [], "quitar favorita")
 
+# --- paradas de cada acera: cada una solo con las guaguas de su sentido
+solo = [(k_, v) for k_, v in s.PARADAS.items() if len(v["solos"]) == 1]
+check(len(solo) > 50 and all(" → " in v["nombre"] or v["nombre"] for _, v in solo), f"{len(solo)} paradas de un solo sentido")
+k_ida, v_ida = next((k_, v) for k_, v in solo if v["solos"] == ["ida"] and "01" in v["lineas"])
+sal = g.proximas(dict(nombre="x", ids=v_ida["ids"]), datetime(2026, 11, 25, 8, 0), s.HORARIOS, s.BASE)
+check(sal and all(x["viaje"].split("|")[2] == "ida" for x in sal if x["linea"] == "01"),
+      f"en «{v_ida['nombre']}» solo salen las guaguas de ida de la 01 ({len(sal)} salidas)")
+
 # --- ver línea y cómo llegar
 j = c.get("/api/linea/01").get_json()
 check(len(j["paradas"]) > 50 and j["paradas"][0]["nombre"].lower().startswith("estacion puerto"), f"línea 01: {len(j['paradas'])} paradas desde la estación")
 check(all(len(v) == len(set(v)) for v in j["salidas"].values()), "salidas sin horas repetidas")
 check(c.get("/api/linea/xx").status_code == 404, "línea inexistente: 404")
-mj = next(k_ for k_, v in s.PARADAS.items() if v["nombre"] == "Morro Jable" and "01" in v["lineas"])
+mj = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].startswith("Morro Jable") and "01" in v["lineas"] and v["solos"] != ["vuelta"])
 from app.planificador import MIN_TRANSBORDO
 buses_de = lambda o_: [p for p in o_["pasos"] if p["tipo"] == "bus"]
 j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
@@ -117,8 +125,8 @@ j2 = c.get(f"/api/ruta?desde={mj}&hasta={pid_est}").get_json()
 check(all(buses_de(x)[0]["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
 
 # --- cómo llegar con transbordos
-tui = next(k_ for k_, v in s.PARADAS.items() if "tuineje" in v["nombre"].lower() and "16" in v["lineas"])
-cot = next(k_ for k_, v in s.PARADAS.items() if "cotillo" in v["nombre"].lower() and "08" in v["lineas"])
+tui = next(k_ for k_, v in s.PARADAS.items() if "tuineje" in v["nombre"].split(" → ")[0].lower() and "16" in v["lineas"])
+cot = next(k_ for k_, v in s.PARADAS.items() if "cotillo" in v["nombre"].split(" → ")[0].lower() and "08" in v["lineas"])
 jt = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()
 check(jt["opciones"] and all(t["transbordos"] >= 1 for t in jt["opciones"]), f"Tuineje → El Cotillo: sin directa, {len(jt['opciones'])} opciones con transbordo")
 bien = True
@@ -135,7 +143,7 @@ check(all(b["sale"] >= a["llega"] + timedelta(minutes=MIN_TRANSBORDO) for it in 
 
 # --- desde donde estás / un pueblo: se miran todas las paradas a las que se puede ir andando
 cb = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].startswith("CORRAL BLANCO 1"))
-aj = next(k_ for k_, v in s.PARADAS.items() if "ajuy" in v["nombre"].lower())
+aj = next(k_ for k_, v in s.PARADAS.items() if "ajuy" in v["nombre"].split(" → ")[0].lower())
 P_ = s.PARADAS[cb]
 jp = c.get(f"/api/ruta?desde=@{P_['lat'] + 0.004},{P_['lon']}&hasta={aj}&dn=Mi%20casa").get_json()
 o = jp["opciones"][0]

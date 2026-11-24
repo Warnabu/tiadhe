@@ -762,7 +762,7 @@ $('buscar').onblur = () => setTimeout(() => $('sug').classList.add('oculto'), 20
 $('buscar').oninput = e => {
   const q = norm(e.target.value.trim()), s = $('sug');
   if (!q) { mostrarRecientes(); return; }
-  const r = paradas.filter(p => norm(p.nombre).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'Líneas ' + p.lineas.join(', '), f: () => { foco(p); elegir({ tipo: 'parada', ...p }); } }));
+  const r = paradas.filter(p => norm(p.nombre.split(' → ')[0]).includes(q)).slice(0, 6).map(p => ({ t: p.nombre, sub: 'Líneas ' + p.lineas.join(', '), f: () => { foco(p); elegir({ tipo: 'parada', ...p }); } }));
   const mn = q.match(/^(?:l(?:inea)?\.?\s*)?0*(\d{1,3})$/);
   if (mn) Object.keys(colores).filter(n => String(Number(n)) === mn[1]).forEach(n => r.unshift({ t: 'Línea ' + n, sub: 'Ver recorrido y paradas', f: () => abrirLinea(n) }));
   lugares.filter(l => norm(l.n).includes(q)).slice(0, 3).forEach(l => r.push(rutaDesde
