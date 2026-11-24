@@ -46,6 +46,7 @@ ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE
 ```bash
 python herramientas/importar_mapas.py      # mapas de Google → datos/trazados_originales.json
 python herramientas/ajustar_rutas.py       # los pega a las calles reales → datos/paradas_reales.json
+python herramientas/limpiar_trazados.py    # quita rodeos fuera de la calle, ramales y picos que deja el ajuste
 python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectura)
 ```
 
