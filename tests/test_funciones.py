@@ -105,56 +105,77 @@ check(len(j["paradas"]) > 50 and j["paradas"][0]["nombre"].lower().startswith("e
 check(all(len(v) == len(set(v)) for v in j["salidas"].values()), "salidas sin horas repetidas")
 check(c.get("/api/linea/xx").status_code == 404, "línea inexistente: 404")
 mj = next(k_ for k_, v in s.PARADAS.items() if v["nombre"] == "Morro Jable" and "01" in v["lineas"])
+from app.planificador import MIN_TRANSBORDO
+buses_de = lambda o_: [p for p in o_["pasos"] if p["tipo"] == "bus"]
 j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
-check(j["opciones"] and all(o["linea"] in ("01", "10", "15") for o in j["opciones"]), f"Puerto → Morro Jable: {len(j['opciones'])} guaguas directas")
+directas = [o_ for o_ in j["opciones"] if not o_["transbordos"]]
+check(directas and all(buses_de(o_)[0]["linea"] in ("01", "10", "15") for o_ in directas), f"Puerto → Morro Jable: {len(directas)} guaguas directas")
+check(all(o_["transbordos"] == 0 for o_ in j["opciones"]), "con directas no propone transbordos para llegar igual o más tarde")
 o = j["opciones"][0]
 check(o["llega"] > o["sale"] or o["manana"], "llega después de salir")
 j2 = c.get(f"/api/ruta?desde={mj}&hasta={pid_est}").get_json()
-check(all(x["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
+check(all(buses_de(x)[0]["linea"] in ("01", "10", "15") for x in j2["opciones"]), "y al revés, solo líneas que van en ese sentido")
 
 # --- cómo llegar con transbordos
-from app.planificador import MIN_TRANSBORDO
 tui = next(k_ for k_, v in s.PARADAS.items() if "tuineje" in v["nombre"].lower() and "16" in v["lineas"])
 cot = next(k_ for k_, v in s.PARADAS.items() if "cotillo" in v["nombre"].lower() and "08" in v["lineas"])
-j = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()
-check(not j["opciones"] and j["transbordos"], f"Tuineje → El Cotillo: sin directa, {len(j['transbordos'])} opciones con transbordo")
+jt = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()
+check(jt["opciones"] and all(t["transbordos"] >= 1 for t in jt["opciones"]), f"Tuineje → El Cotillo: sin directa, {len(jt['opciones'])} opciones con transbordo")
 bien = True
-for t in j["transbordos"]:
-    buses = [p for p in t["pasos"] if p["tipo"] == "bus"]
-    bien &= t["transbordos"] == len(buses) - 1 >= 1 and buses[0]["sale"] == t["sale"] and buses[-1]["llega"] == t["llega"]
-    bien &= all(p["espera"] is None or p["espera"] >= MIN_TRANSBORDO for p in buses)
+for t in jt["opciones"]:
+    bs = buses_de(t)
+    bien &= t["transbordos"] == len(bs) - 1 and bs[0]["sale"] == t["sale"]
+    bien &= all(p["espera"] is None or p["espera"] >= MIN_TRANSBORDO for p in bs)
 check(bien, f"cada transbordo deja ≥{MIN_TRANSBORDO} min (contando lo más tarde que llega y lo más pronto que sale)")
-check(any(any("puerto" in p.get("hasta", "").lower() for p in t["pasos"]) for t in j["transbordos"]), "propone cambiar en Puerto del Rosario")
+check(any(any("puerto" in p.get("hasta", "").lower() for p in t["pasos"]) for t in jt["opciones"]), "propone cambiar en Puerto del Rosario")
 its = s.PLAN.itinerarios(tui, cot, datetime(2026, 11, 24, 6, 0))
 check(all(b["sale"] >= a["llega"] + timedelta(minutes=MIN_TRANSBORDO) for it in its
           for a, b in zip([p for p in it if p["tipo"] == "bus"], [p for p in it if p["tipo"] == "bus"][1:])),
       f"planificador: {len(its)} itinerarios con margen real en los cambios")
-j = c.get(f"/api/ruta?desde={pid_est}&hasta={mj}").get_json()
-check(j["transbordos"] == [], "Puerto → Morro Jable: con directas no propone dar vueltas")
+
+# --- desde donde estás / un pueblo: se miran todas las paradas a las que se puede ir andando
+cb = next(k_ for k_, v in s.PARADAS.items() if v["nombre"].startswith("CORRAL BLANCO 1"))
+aj = next(k_ for k_, v in s.PARADAS.items() if "ajuy" in v["nombre"].lower())
+P_ = s.PARADAS[cb]
+jp = c.get(f"/api/ruta?desde=@{P_['lat'] + 0.004},{P_['lon']}&hasta={aj}&dn=Mi%20casa").get_json()
+o = jp["opciones"][0]
+check(jp["desde"]["nombre"] == "Mi casa" and o["pasos"][0]["tipo"] == "pie" and o["pasos"][0]["salir"] <= o["sale"],
+      f"desde un punto: «camina {o['pasos'][0]['minutos']} min hasta {o['pasos'][0]['hasta']} (sal a las {o['pasos'][0]['salir']})»")
+check(o["camino"][0][1].startswith("@"), "el camino empieza en el punto")
+jcb = c.get(f"/api/ruta?desde={cb}&hasta={aj}").get_json()
+check(buses_de(jcb["opciones"][0])[0]["desde"] != s.nombre_corto(cb) and jcb["opciones"][0]["pasos"][0]["tipo"] == "pie",
+      f"desde una parada sin la guagua buena, propone andar a la de al lado ({buses_de(jcb['opciones'][0])[0]['desde']})")
+its = s.PLAN.itinerarios(s.PLAN.alrededor(28.3285, -14.0470, 1500, 3), aj, datetime(2026, 11, 25, 7, 30))
+lat_min = min(s.PARADAS[p["hasta"]]["lat"] for it in its for p in it if p["tipo"] == "bus")
+check(its and lat_min > 28.1, f"Tuineje → Ajuy cambia de guagua en cuanto puede (no baja a Morro Jable para volver): {s.nombre_corto([p for p in its[0] if p['tipo'] == 'bus'][0]['hasta'])}")
+check(c.get(f"/api/ruta?desde=@40.4,-3.7&hasta={aj}").status_code == 404, "un punto fuera de la isla: 404")
+check(c.get(f"/api/ruta?desde=@x&hasta={aj}").status_code == 404, "un punto mal escrito: 404")
+jn = c.get(f"/api/ruta?desde=@28.32,-14.04&hasta={aj}&dn=" + "<b>" * 40).get_json()
+check(len(jn["desde"]["nombre"]) <= 60, "el nombre que manda la web se recorta")
 
 # --- elegir camino: en el mapa solo el trozo de cada línea que se usa
 import json as _json
 def camino(t):
     r = c.get("/api/camino?t=" + _json.dumps(t))
     return r.status_code, r.get_json()
-st, jc = camino(j["opciones"][0]["camino"])
-tr = jc["tramos"][0]
+st, jc = camino(directas[0]["camino"])
+tr = [x for x in jc["tramos"] if x["tipo"] == "bus"][0]
 ini, fin = tr["p"][0][0], tr["p"][-1][-1]
 check(st == 200 and tr["paradas"][0] == pid_est and tr["paradas"][-1] == mj, f"directa: de la estación a Morro Jable, {len(tr['paradas'])} paradas")
 check(g.km(dict(lat=ini[0], lon=ini[1]), s.PARADAS[pid_est]) < 0.15 and g.km(dict(lat=fin[0], lon=fin[1]), s.PARADAS[mj]) < 0.15,
       "el dibujo empieza en la parada de subida y acaba en la de bajada")
-jt = c.get(f"/api/ruta?desde={tui}&hasta={cot}").get_json()["transbordos"][0]
-st, jc = camino(jt["camino"])
-buses = [x for x in jc["tramos"] if x["tipo"] == "bus"]
-check(st == 200 and len(buses) == jt["transbordos"] + 1,
-      f"transbordo: {len(buses)} trozos de línea ({', '.join(x['linea'] for x in buses)})")
+st, jc = camino(jt["opciones"][0]["camino"])
+bs = [x for x in jc["tramos"] if x["tipo"] == "bus"]
+check(st == 200 and len(bs) == jt["opciones"][0]["transbordos"] + 1, f"transbordo: {len(bs)} trozos de línea ({', '.join(x['linea'] for x in bs)})")
 ok_union = all(g.km(dict(lat=x["p"][-1][-1][0], lon=x["p"][-1][-1][1]), dict(lat=y["p"][0][0][0], lon=y["p"][0][0][1])) < 0.4
                for x, y in zip(jc["tramos"], jc["tramos"][1:]))
 check(ok_union, "cada trozo empieza donde acaba el anterior (o a un paseo corto)")
-largo = sum(g.km(dict(lat=a_[0], lon=a_[1]), dict(lat=b_[0], lon=b_[1])) for x in buses for parte in x["p"] for a_, b_ in zip(parte, parte[1:]))
+largo = sum(g.km(dict(lat=a_[0], lon=a_[1]), dict(lat=b_[0], lon=b_[1])) for x in bs for parte in x["p"] for a_, b_ in zip(parte, parte[1:]))
 check(largo < 150, f"no dibuja las líneas enteras: {largo:.0f} km de recorrido")
+st, jc = camino(jp["opciones"][0]["camino"])
+check(st == 200 and jc["tramos"][0]["tipo"] == "pie" and jc["tramos"][0]["p"][0][0][0] == round(P_["lat"] + 0.004, 5), "desde un punto: el dibujo empieza andando desde ahí")
 check(camino([["01", "ida", mj, pid_est]])[0] == 404, "un sentido que no va de una parada a la otra: 404")
-check(camino("x")[0] == 400 and c.get("/api/camino?t=[[1,2]]").status_code == 400, "camino mal formado: 400")
+check(camino("x")[0] == 400 and c.get("/api/camino?t=[[1,2]]").status_code == 400 and camino([["pie", "@40,-3", mj]])[0] == 400, "camino mal formado: 400")
 
 # --- estadísticas y vista previa
 j = c.get("/api/estadisticas").get_json()

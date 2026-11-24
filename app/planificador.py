@@ -26,6 +26,7 @@ class Planificador:
         """parada_de: id de parada de línea → id de parada del mapa. paradas: id del mapa → {lat, lon, nombre…}."""
         self.horarios, self.base, self.parada_de, self.paradas = horarios, base, parada_de, paradas
         self._dias = {}
+        self._paradas_viaje = {}   # viaje → [(parada, hora estimada, lo más pronto, lo más tarde)] en orden
         # caminatas cortas entre paradas cercanas
         self.vecinas = {p: [] for p in paradas}
         ids = list(paradas)
@@ -63,6 +64,7 @@ class Planificador:
                     est = inicio + timedelta(minutes=off)
                     antes, despues = g.margenes(dict(prec="oficial" if off == 0 else "estimado", cal="t" in p, off=off))
                     puntos.append((pid, est, est - timedelta(minutes=antes), est + timedelta(minutes=despues)))
+                self._paradas_viaje[viaje] = puntos
                 for (a, ea, pa, _), (b, eb, _, tb) in zip(puntos, puntos[1:]):
                     res.append((pa, tb, a, b, viaje, num, destino, ea, eb, s.get("nota", "")))
         res.sort(key=lambda c: c[0])
@@ -76,23 +78,37 @@ class Planificador:
         if len(self._dias) > 6:   # no acumular días viejos en memoria
             for f in sorted(self._dias)[:-4]:
                 self._dias.pop(f, None)
+            dias = {f"{f:%Y%m%d}" for f in self._dias}
+            self._paradas_viaje = {v: x for v, x in self._paradas_viaje.items() if v.split("|")[0] in dias}
         return todas
 
     # ------------------------------------------------------------------ búsqueda
-    def _buscar(self, conns, origen, destino, salida, max_tramos=MAX_TRAMOS):
-        """Llegada más temprana (prudente) a 'destino' saliendo de 'origen' a partir de 'salida'. Itinerario o None."""
+    def alrededor(self, lat, lon, radio_m, minimo=0):
+        """{parada: minutos andando} de las paradas a ≤ radio_m de un punto (al menos las 'minimo' más cercanas a ≤ 4 km)."""
+        dist = sorted((g.km(dict(lat=lat, lon=lon), v) * 1000, k) for k, v in self.paradas.items())
+        sel = [(d, k) for d, k in dist if d <= radio_m] or [(d, k) for d, k in dist[:minimo] if d <= 4000]
+        return {k: minutos_andando(d) for d, k in sel}
+
+    def _buscar(self, conns, origenes, destinos, salida, max_tramos=MAX_TRAMOS):
+        """Llegada más temprana (prudente) a alguno de 'destinos' saliendo a partir de 'salida' hacia alguno de 'origenes'.
+
+        origenes/destinos: {parada: minutos andando desde el punto de partida / hasta el de llegada}. Itinerario o None."""
         INF = datetime.max
-        llega = {origen: salida}            # hora a la que seguro estás en cada parada
-        tramos = {origen: 0}                # guaguas usadas hasta cada parada
-        previo = {}                         # parada → ("bus", conexión de subida, conexión de bajada) | ("pie", desde, min)
-        subida = {}                         # viaje → conexión en la que se subió
-        for v, t in self.vecinas.get(origen, []):
-            if salida + timedelta(minutes=t) < llega.get(v, INF):
-                llega[v], tramos[v], previo[v] = salida + timedelta(minutes=t), 0, ("pie", origen, t)
+        llega, tramos, previo, subida = {}, {}, {}, {}
+        mejor, fin = INF, None
+
+        def marcar(x, t, n, p):
+            nonlocal mejor, fin
+            llega[x], tramos[x], previo[x] = t, n, p
+            if n and x in destinos and t + timedelta(minutes=destinos[x]) < mejor:
+                mejor, fin = t + timedelta(minutes=destinos[x]), x
+
+        for o, t in origenes.items():
+            marcar(o, salida + timedelta(minutes=t), 0, ("inicio", t))
         i0 = bisect.bisect_left(conns, salida, key=lambda c: c[0])
         for c in conns[i0:]:
             pronto, tarde, a, b, viaje = c[0], c[1], c[2], c[3], c[4]
-            if pronto > llega.get(destino, INF):
+            if pronto > mejor:
                 break   # ya nada puede llegar antes
             if viaje not in subida:
                 if a not in llega:
@@ -104,15 +120,17 @@ class Planificador:
                 subida[viaje] = c
             if tarde < llega.get(b, INF):
                 n = tramos[subida[viaje][2]] + 1
-                llega[b], tramos[b], previo[b] = tarde, n, ("bus", subida[viaje], c)
+                marcar(b, tarde, n, ("bus", subida[viaje], c))
                 for v, t in self.vecinas.get(b, []):
                     if tarde + timedelta(minutes=t) < llega.get(v, INF):
-                        llega[v], tramos[v], previo[v] = tarde + timedelta(minutes=t), n, ("pie", b, t)
-        if destino not in llega or destino not in previo:
+                        marcar(v, tarde + timedelta(minutes=t), n, ("pie", b, t))
+        if fin is None:
             return None
         # reconstrucción
-        pasos, x = [], destino
-        while x != origen:
+        pasos, x = [], fin
+        if destinos[fin]:
+            pasos.append(dict(tipo="pie", desde=fin, hasta=None, minutos=destinos[fin]))
+        while previo[x][0] != "inicio":
             p = previo[x]
             if p[0] == "pie":
                 pasos.append(dict(tipo="pie", desde=p[1], hasta=x, minutos=p[2]))
@@ -122,41 +140,83 @@ class Planificador:
                 pasos.append(dict(tipo="bus", linea=sub[5], destino=sub[6], viaje=sub[4], nota=sub[9],
                                   desde=sub[2], hasta=baj[3], sale=sub[0], sale_est=sub[7], llega=baj[1], llega_est=baj[8]))
                 x = sub[2]
+        if previo[x][1]:
+            pasos.append(dict(tipo="pie", desde=None, hasta=x, minutos=previo[x][1]))
         pasos.reverse()
-        return pasos if any(p["tipo"] == "bus" for p in pasos) else None
+        return self._cambiar_antes(pasos)
 
-    def itinerarios(self, origen, destino, ahora, n=4, horas=20):
+    def _cambiar_antes(self, pasos):
+        """Entre dos guaguas seguidas, cambiar en la primera parada común en la que dé tiempo (con el margen).
+
+        La búsqueda sube a la segunda guagua en cuanto puede, y eso a veces hace seguir en la primera hasta su final
+        para volver luego en la otra (Tuineje → Morro Jable → Ajuy). Cambiando antes se llega a la misma hora y se
+        evita el rodeo."""
+        for i in range(len(pasos) - 1):
+            a, b = pasos[i], pasos[i + 1]
+            if a["tipo"] != "bus" or b["tipo"] != "bus":
+                continue
+            pa, pb = self._paradas_viaje.get(a["viaje"]), self._paradas_viaje.get(b["viaje"])
+            if not pa or not pb:
+                continue
+            ia = next((k for k, x in enumerate(pa) if x[0] == a["desde"]), None)
+            ib_fin = next((k for k, x in enumerate(pb) if x[0] == b["hasta"] and x[1] > b["sale_est"]), None)
+            if ia is None or ib_fin is None:
+                continue
+            de_b = {}
+            for x in pb[:ib_fin]:
+                de_b.setdefault(x[0], x)
+            for pid, est, _, tarde in pa[ia + 1:]:
+                x = de_b.get(pid)
+                if x and tarde + timedelta(minutes=MIN_TRANSBORDO) <= x[2] or pid == a["hasta"]:
+                    if pid != a["hasta"]:
+                        a.update(hasta=pid, llega=tarde, llega_est=est)
+                        b.update(desde=pid, sale=x[2], sale_est=x[1])
+                    break
+        return pasos
+
+    @staticmethod
+    def resumen(it):
+        """(hora a la que hay que salir, hora de llegada al final, guaguas, minutos andando) de un itinerario."""
+        buses = [p for p in it if p["tipo"] == "bus"]
+        antes = sum(p["minutos"] for p in it[:it.index(buses[0])])
+        despues = sum(p["minutos"] for p in it[it.index(buses[-1]) + 1:])
+        return (buses[0]["sale"] - timedelta(minutes=antes), buses[-1]["llega"] + timedelta(minutes=despues),
+                len(buses), sum(p["minutos"] for p in it if p["tipo"] == "pie"))
+
+    def itinerarios(self, origen, destino, ahora, n=6, horas=20):
         """Hasta n itinerarios que merezcan la pena en las próximas 'horas' horas.
 
-        Se buscan con 1, 2 y 3 guaguas como máximo y se descarta una opción si otra sale a la misma hora o más tarde,
-        llega a la misma hora o antes y no tiene más transbordos (así no se propone dar vueltas para llegar igual)."""
+        origen/destino: una parada o {parada: minutos andando}. Se buscan con 1, 2 y 3 guaguas como máximo y se
+        descarta una opción si otra sale a la misma hora o más tarde, llega a la misma hora o antes, no tiene más
+        transbordos ni se anda más (así no se propone dar vueltas ni caminar de más para llegar igual)."""
+        origenes = origen if isinstance(origen, dict) else {origen: 0}
+        destinos = destino if isinstance(destino, dict) else {destino: 0}
         conns = self._conexiones(ahora)
         limite = ahora + timedelta(hours=horas)
         candidatos = {}
         for k in range(1, MAX_TRAMOS + 1):
             salida = ahora
             for _ in range(n + 2):
-                it = self._buscar(conns, origen, destino, salida, k)
+                it = self._buscar(conns, origenes, destinos, salida, k)
                 if not it:
                     break
-                buses = [p for p in it if p["tipo"] == "bus"]
-                if buses[0]["sale"] > limite:
+                sale = self.resumen(it)[0]
+                if sale > limite:
                     break
-                candidatos.setdefault(tuple(p["viaje"] for p in buses), it)
-                salida = buses[0]["sale"] + timedelta(minutes=1)
-        def resumen(it):
-            buses = [p for p in it if p["tipo"] == "bus"]
-            return buses[0]["sale"], buses[-1]["llega"], len(buses)
+                clave = tuple(p.get("viaje") or (p["desde"], p["hasta"]) for p in it)
+                candidatos.setdefault(clave, it)
+                salida = sale + timedelta(minutes=1)
         lista = list(candidatos.values())
-        buenas = []
-        for it in lista:
-            s0, l0, t0 = resumen(it)
-            peor = any((s1 >= s0 and l1 <= l0 and t1 <= t0) and (s1, l1, t1) != (s0, l0, t0)
-                       for s1, l1, t1 in map(resumen, lista))
-            if not peor:
-                buenas.append(it)
-        buenas.sort(key=lambda it: resumen(it)[:2])
+        res = [self.resumen(it) for it in lista]
+        buenas = [it for it, r0 in zip(lista, res)
+                  if not any(all(a >= b if i == 0 else a <= b for i, (a, b) in enumerate(zip(r1, r0))) and r1 != r0 for r1 in res)]
+        buenas.sort(key=lambda it: self.resumen(it)[:2])
         return buenas[:n]
+
+
+def minutos_andando(metros):
+    """Minutos a pie (las calles no van en línea recta: +25 %), redondeando hacia arriba."""
+    return math.ceil(metros * 1.25 / VEL_PIE)
 
 
 # ---------------------------------------------------------------------- el camino en el mapa

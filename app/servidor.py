@@ -358,57 +358,72 @@ def api_linea(num):
                    paradas=paradas, salidas=salidas)
 
 
+RADIO_PARADA = 500    # desde una parada también se miran las de alrededor (a ≤ 500 m andando)
+RADIO_PUNTO = 1500    # desde tu ubicación o un pueblo: todas las paradas a ≤ 1,5 km
+
+
+def _extremo(valor, nombre):
+    """Parada ('id') o punto ('@lat,lon') → (nombre, {parada: minutos andando}, punto o None)."""
+    if valor in PARADAS:
+        v = PARADAS[valor]
+        return nombre_corto(valor), {valor: 0, **{k: m for k, m in PLAN.alrededor(v["lat"], v["lon"], RADIO_PARADA).items() if k != valor}}, None
+    try:
+        lat, lon = map(float, valor.lstrip("@").split(","))
+        assert valor.startswith("@") and 27.6 < lat < 29.0 and -14.7 < lon < -13.3
+    except (ValueError, AssertionError):
+        raise Error("parada o punto desconocido", 404)
+    paradas = PLAN.alrededor(lat, lon, RADIO_PUNTO, minimo=3)
+    if not paradas:
+        raise Error("no hay paradas de guagua cerca de ese punto", 404)
+    nombre = "".join(ch for ch in (nombre or "") if ch.isprintable())[:60].strip() or "tu ubicación"
+    return nombre, paradas, [round(lat, 5), round(lon, 5)]
+
+
 @app.get("/api/ruta")
 def api_ruta():
-    """Guaguas directas de la parada 'desde' a la parada 'hasta' en las próximas horas."""
+    """Cómo ir de 'desde' a 'hasta' (paradas o puntos '@lat,lon'): directas, con transbordos y andando lo justo."""
     o, d = request.args.get("desde", ""), request.args.get("hasta", "")
-    if o not in PARADAS or d not in PARADAS:
-        raise Error("parada desconocida", 404)
     if o == d:
-        raise Error("el origen y el destino son la misma parada")
+        raise Error("el origen y el destino son el mismo sitio")
+    no, origenes, po = _extremo(o, request.args.get("dn"))
+    nd, destinos, pd = _extremo(d, request.args.get("hn"))
     ahora = ahora_local()
-    go, gd = PARADAS[o], PARADAS[d]
     opciones = []
-    for r in g.proximas(dict(nombre=go["nombre"], ids=go["ids"]), ahora, HORARIOS, BASE, com=COM, gracia=0, modo=_modo()):
-        t = g.trayecto(r["viaje"], go["ids"], gd["ids"], HORARIOS, BASE)
-        if not t:
-            continue
-        sale = g.llegada_minima(r)
-        llega = r["llegada"] + timedelta(minutes=t[1] - t[0] + g.margenes(r)[1])   # lo más tarde que puede llegar
-        opciones.append(dict(linea=r["linea"], destino=r["destino"], sale=f"{sale:%H:%M}", texto=g.texto_espera(r, ahora),
-                             llega=f"{llega:%H:%M}", duracion=round((llega - sale).total_seconds() / 60),
-                             manana=sale.date() > ahora.date(), nota=r["nota"], prec=r["prec"],
-                             camino=[[r["linea"], r["viaje"].split("|")[2], o, d]]))
-        if len(opciones) >= 8:
-            break
-    # Con transbordo: si no hay directa, o si cambiando de guagua se llega antes que con la primera directa
-    primera = min((datetime.strptime(x["llega"], "%H:%M").replace(year=ahora.year, month=ahora.month, day=ahora.day)
-                   + timedelta(days=1 if x["manana"] else 0) for x in opciones[:3]), default=None)
-    transbordos = []
-    for it in PLAN.itinerarios(o, d, ahora):
+    for it in PLAN.itinerarios(origenes, destinos, ahora):
+        salir, llegar, nbus, _ = PLAN.resumen(it)
         buses = [p for p in it if p["tipo"] == "bus"]
-        if len(buses) < 2 or (primera and buses[-1]["llega"] >= primera):
-            continue
-        pasos, prev = [], None
-        camino = [["pie", p["desde"], p["hasta"]] if p["tipo"] == "pie" else [p["linea"], p["viaje"].split("|")[2], p["desde"], p["hasta"]]
-                  for p in it]
-        for p in it:
+        pasos, camino, prev = [], [], None
+        for k, p in enumerate(it):
             if p["tipo"] == "pie":
-                pasos.append(dict(tipo="pie", desde=nombre_corto(p["desde"]), hasta=nombre_corto(p["hasta"]), minutos=p["minutos"]))
+                desde = p["desde"] or (o if po is None else None)
+                hasta = p["hasta"] or (d if pd is None else None)
+                pasos.append(dict(tipo="pie", desde=nombre_corto(desde) if desde else no, hasta=nombre_corto(hasta) if hasta else nd,
+                                  minutos=p["minutos"], salir=f"{salir:%H:%M}" if k == 0 else None))
+                camino.append(["pie", desde or f"@{po[0]},{po[1]}", hasta or f"@{pd[0]},{pd[1]}"])
                 continue
             espera = round((p["sale"] - prev["llega"]).total_seconds() / 60) if prev else None
             pasos.append(dict(tipo="bus", linea=p["linea"], destino=p["destino"], desde=nombre_corto(p["desde"]),
                               hasta=nombre_corto(p["hasta"]), sale=f"{p['sale']:%H:%M}", llega=f"{p['llega']:%H:%M}",
                               espera=espera, nota=p["nota"]))
+            camino.append([p["linea"], p["viaje"].split("|")[2], p["desde"], p["hasta"]])
             prev = p
-        transbordos.append(dict(sale=f"{buses[0]['sale']:%H:%M}", llega=f"{buses[-1]['llega']:%H:%M}",
-                                manana=buses[0]["sale"].date() > ahora.date(), transbordos=len(buses) - 1,
-                                duracion=round((buses[-1]["llega"] - buses[0]["sale"]).total_seconds() / 60), pasos=pasos,
-                                camino=camino))
-        if len(transbordos) >= 3:
-            break
-    return jsonify(ok=True, desde=dict(id=o, nombre=nombre_corto(o)), hasta=dict(id=d, nombre=nombre_corto(d)),
-                   opciones=opciones, transbordos=transbordos)
+        opciones.append(dict(sale=f"{buses[0]['sale']:%H:%M}", salir=f"{salir:%H:%M}", llega=f"{llegar:%H:%M}",
+                             manana=salir.date() > ahora.date(), transbordos=nbus - 1,
+                             duracion=round((llegar - salir).total_seconds() / 60), pasos=pasos, camino=camino))
+    return jsonify(ok=True, desde=dict(nombre=no, punto=po), hasta=dict(nombre=nd, punto=pd), opciones=opciones)
+
+
+def _lugar(x):
+    """[lat, lon] de una parada o de un punto '@lat,lon' de la isla (None si no vale)."""
+    if not isinstance(x, str):
+        return None
+    if x in PARADAS:
+        return [PARADAS[x]["lat"], PARADAS[x]["lon"]]
+    try:
+        lat, lon = map(float, x.lstrip("@").split(","))
+        return [lat, lon] if x.startswith("@") and 27.6 < lat < 29.0 and -14.7 < lon < -13.3 else None
+    except ValueError:
+        return None
 
 
 @app.get("/api/camino")
@@ -421,9 +436,9 @@ def api_camino():
         raise Error("camino no válido")
     res = []
     for x in t:
-        if len(x) == 3 and x[0] == "pie" and x[1] in PARADAS and x[2] in PARADAS:
-            a, b = PARADAS[x[1]], PARADAS[x[2]]
-            res.append(dict(tipo="pie", p=[[[a["lat"], a["lon"]], [b["lat"], b["lon"]]]], paradas=[x[1], x[2]]))
+        if len(x) == 3 and x[0] == "pie" and _lugar(x[1]) and _lugar(x[2]):
+            a, b = _lugar(x[1]), _lugar(x[2])
+            res.append(dict(tipo="pie", p=[[a, b]], paradas=[y for y in x[1:] if y in PARADAS]))
         elif len(x) == 4 and x[0] in BASE and x[1] in ("ida", "vuelta") and x[2] in PARADAS and x[3] in PARADAS:
             tr = CAMINOS.tramo(x[0], x[1], x[2], x[3])
             if not tr:

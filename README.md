@@ -57,9 +57,11 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
   para las paradas siguientes. El panel muestra la actividad del día para animar a avisar.
 - **Avísame 5 min antes** (notificación push, aunque la web esté cerrada).
 - **Ver una línea** (tocando su número): recorrido, próximas salidas y paradas.
-- **Cómo llegar** de una parada a otra: guaguas directas y, si no hay o se llega antes, combinaciones con hasta 2
-  transbordos (`app/planificador.py`), dejando al menos 5 min entre lo más tarde que llega una y lo más pronto que
-  sale la otra.
+- **Cómo llegar** desde donde estás (o desde un pueblo o una parada) a una parada o un pueblo. Se miran todas las
+  paradas a las que se puede ir andando (1,5 km desde un punto, 500 m desde una parada) y se elige la mejor, contando
+  lo que se camina. Cada parada tiene «Ir aquí» y «Salir desde aquí». Opciones: guaguas directas y combinaciones
+  con hasta 2 transbordos (`app/planificador.py`), dejando al menos 5 min entre lo más tarde que llega una y lo más
+  pronto que sale la otra, y cambiando de guagua en la primera parada en la que se pueda (sin rodeos).
   Con **Elegir camino** el mapa muestra solo ese camino: el trozo exacto de cada línea (de la parada donde te subes a
   la que te bajas), sus paradas y lo que hay que andar (desde donde estás, si diste permiso de ubicación).
 - **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
