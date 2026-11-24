@@ -581,14 +581,14 @@ def inicio():
         _cache_web["_index"] = (RAIZ / "web" / "index.html").read_text(encoding="utf-8")
     html_ = _cache_web["_index"]
     base = ("https://" if os.environ.get("RENDER") else request.scheme + "://") + request.host
-    titulo, desc = "Guaguas Fuerteventura", ("Cuándo pasa la guagua por tu parada en Fuerteventura: horarios de todas las "
-                                             "líneas y tiempo real gracias a la comunidad.")
+    titulo, desc = "Guaguas Fuerteventura", ("Cuándo pasa la guagua por tu parada en Fuerteventura: horarios oficiales "
+                                             "de todas las líneas, paradas y cómo llegar.")
     url = base + "/"
     pid = request.args.get("parada", "")
     if pid in PARADAS:
         gr = PARADAS[pid]
         titulo = f"Guaguas en {nombre_corto(pid)}"
-        desc = f"Próximas guaguas de las líneas {', '.join(sorted(gr['lineas']))} en esta parada, con tiempo real."
+        desc = f"Próximas guaguas de las líneas {', '.join(sorted(gr['lineas']))} en esta parada, con sus horarios oficiales."
         url = f"{base}/?parada={pid}"
     og = "\n".join([
         f'<meta name="description" content="{escape(desc)}">',

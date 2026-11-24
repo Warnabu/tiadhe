@@ -33,7 +33,9 @@ const Guaguas = (() => {
 
   let db, priv, pub, dev, perfil = null, cambioPerfil = () => {};
   let internalToken = null;
-  let modoDinamico = localStorage.getItem('modoDinamico') === 'true';
+  // Tiempo real (avisos «me he subido»): aún en pruebas. Mientras sea false la app usa solo los horarios oficiales.
+  const TIEMPO_REAL_DISPONIBLE = false;
+  let modoDinamico = TIEMPO_REAL_DISPONIBLE && localStorage.getItem('modoDinamico') === 'true';
   let cambioModo = () => {};
 
   let listoP = Promise.resolve();   // se resuelve cuando el dispositivo está registrado en el servidor
@@ -44,7 +46,7 @@ const Guaguas = (() => {
   }
 
   function setModoDinamico(valor) {
-    modoDinamico = Boolean(valor);
+    modoDinamico = TIEMPO_REAL_DISPONIBLE && Boolean(valor);
     localStorage.setItem('modoDinamico', String(modoDinamico));
     cambioModo(modoDinamico);
   }
@@ -194,6 +196,7 @@ const Guaguas = (() => {
     signIn: () => window.firebaseSignIn?.(),
     signOut: () => window.firebaseSignOut?.(),
     getModoDinamico: () => modoDinamico,
+    tiempoRealDisponible: TIEMPO_REAL_DISPONIBLE,
     setModoDinamico,
     onModoChange: f => { cambioModo = f; setTimeout(() => f(modoDinamico), 0); },
     setInternalToken, activarNotificaciones,

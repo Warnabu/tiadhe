@@ -57,7 +57,7 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
 
 - Próximas guaguas en cada parada. Las horas estimadas muestran siempre **lo más pronto** que puede pasar
   (rango "en 17-30 min" o "desde las 11:15"): es preferible esperar un poco a perderla.
-- **Tiempo real sin registro**: "Me he subido a esta guagua"; cuando coinciden varias personas, la hora se corrige
+- **Tiempo real (próximamente; desactivado con `TIEMPO_REAL_DISPONIBLE` en web/cliente.js)**: "Me he subido a esta guagua"; cuando coinciden varias personas, la hora se corrige
   para las paradas siguientes. El panel muestra la actividad del día para animar a avisar.
 - **Avísame 5 min antes** (notificación push, aunque la web esté cerrada).
 - **Ver una línea** (tocando su número): recorrido, próximas salidas y paradas.

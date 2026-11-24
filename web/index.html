@@ -6,11 +6,11 @@
 <meta name="theme-color" content="#ffffff">
 <title>Guaguas Fuerteventura</title>
 <!--og-->
-<meta name="description" content="Cuándo pasa la guagua por tu parada en Fuerteventura: horarios de todas las líneas y tiempo real gracias a la comunidad.">
+<meta name="description" content="Cuándo pasa la guagua por tu parada en Fuerteventura: horarios oficiales de todas las líneas, paradas y cómo llegar.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Guaguas Fuerteventura">
 <meta property="og:title" content="Guaguas Fuerteventura">
-<meta property="og:description" content="Cuándo pasa la guagua por tu parada en Fuerteventura: horarios de todas las líneas y tiempo real gracias a la comunidad.">
+<meta property="og:description" content="Cuándo pasa la guagua por tu parada en Fuerteventura: horarios oficiales de todas las líneas, paradas y cómo llegar.">
 <meta property="og:image" content="/icons/icon-512.png">
 <meta name="twitter:card" content="summary">
 <!--/og-->
@@ -50,7 +50,7 @@ body.con-sesion #top{right:calc(max(10px,env(safe-area-inset-right)) + 46px)}
 #sug button{display:block;width:100%;text-align:left;padding:11px 14px;border-top:1px solid var(--sep)}
 #sug button:first-child{border-top:0}
 #sug small{display:block;color:var(--tx2);font-size:12.5px}
-#chip{align-self:flex-start;display:flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:15px;font-size:12.5px;font-weight:500;color:var(--tx)}
+#chip{align-self:flex-start;display:flex;align-items:center;gap:7px;height:30px;white-space:nowrap;padding:0 12px;border-radius:15px;font-size:12.5px;font-weight:500;color:var(--tx)}
 #chip .pto{width:7px;height:7px;border-radius:50%;background:var(--tx2)}
 #chip.live .pto{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
 #chip em{font-style:normal;color:var(--acc)}
@@ -89,6 +89,7 @@ body.con-sesion #top{right:calc(max(10px,env(safe-area-inset-right)) + 46px)}
 .sub button:disabled{opacity:.5}
 .sub span{color:var(--ok);font-size:13px;font-weight:500}
 .vacio,#nota{color:var(--tx2);font-size:13px;margin:14px 0 0}
+#intro small.aviso{margin-top:18px;font-size:11.5px;line-height:1.45;opacity:.8;max-width:320px}
 #acc{display:flex;flex-wrap:wrap;gap:4px 18px;margin:-6px 0 12px}
 #acc button{color:var(--acc);font-weight:600;font-size:14px;padding:4px 0}
 button.badge{cursor:pointer}
@@ -183,11 +184,12 @@ html[data-t=dark] .av{color:#06222e}
 <div id="intro" class="oculto"><div class="in">
   <svg class="logo" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#0b6e99"/><rect x="15" y="13" width="34" height="32" rx="8" fill="#fff"/><rect x="20" y="18" width="24" height="12" rx="3" fill="#0b6e99"/><rect x="20" y="35" width="24" height="3" rx="1.5" fill="#0b6e99" opacity=".35"/><circle cx="23" cy="50" r="3.5" fill="#fff"/><circle cx="41" cy="50" r="3.5" fill="#fff"/></svg>
   <h1>Guaguas<br>Fuerteventura</h1>
-  <p>Horarios de todas las líneas y, con ayuda de la comunidad, tiempos de llegada reales.</p>
+  <p>Horarios oficiales de todas las líneas, sus paradas y cómo llegar a tu destino.</p>
   <button class="btn" id="i-free">Empezar</button>
-  <small>Horarios y tiempo real. Sin registro.</small>
+  <small>Sin registro. Tiempo real: próximamente.</small>
   <button class="btn sec" id="i-google">Continuar con Google</button>
   <small>Además, guarda tus paradas favoritas.</small>
+  <small class="aviso">Los recorridos dibujados en el mapa son orientativos: muestran por dónde circula cada línea, pero en algún tramo pueden no coincidir exactamente con las calles por las que pasa la guagua. Las paradas y los horarios son los oficiales.</small>
 </div></div>
 <div id="toast" role="status"></div>
 
@@ -251,6 +253,7 @@ window.__firebaseResolve(ok);
 <script src="/cliente.js"></script>
 <script>
 const $ = id => document.getElementById(id);
+const AVISO_RECORRIDOS = 'Los recorridos dibujados en el mapa son orientativos: muestran por dónde circula cada línea, pero en algún tramo pueden no coincidir exactamente con las calles por las que pasa la guagua. Las paradas y los horarios son los oficiales.';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const norm = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const json = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u + ' ' + r.status); return r.json(); };
@@ -545,7 +548,7 @@ async function abrirLinea(num) {
   const pts = (rutas[num] || []).flatMap(c => c._base);
   if (pts.length) map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [20, 20], paddingBottomRight: [20, ancho() ? 20 : Math.round(innerHeight * .45)] });
   $('pn').textContent = 'Línea ' + d.num; $('ps').textContent = d.nombre;
-  $('seg').classList.add('oculto'); $('nota').textContent = 'Toca una parada para ver sus horarios.';
+  $('seg').classList.add('oculto'); $('nota').textContent = 'Toca una parada para ver sus horarios. ' + AVISO_RECORRIDOS;
   const l = $('lista'); l.innerHTML = '';
   const h = t => { const x = document.createElement('h3'); x.textContent = t; l.appendChild(x); };
   h('Próximas salidas');
@@ -724,7 +727,7 @@ async function verRuta(o, d) {
       : `<li style="--c:${esc(colores[p.linea] || '#555')}">${p.espera != null ? `Cambia (espera ${p.espera} min): coge` : 'Coge'} la <b>${esc(p.linea)}</b> en <b>${esc(p.desde)}</b> a las ${esc(p.sale)} y bájate en <b>${esc(p.hasta)}</b> (antes de las ${esc(p.llega)})${p.nota && !p.espera ? ` · ${esc(p.nota)}` : ''}</li>`).join('');
     r.appendChild(ol); boton(r, t.camino, ol); l.appendChild(r);
   });
-  $('nota').textContent = 'Horas de salida: lo más pronto que puede pasar. Horas de llegada: lo más tarde. En los transbordos se dejan al menos 5 min de margen. Los minutos andando son aproximados.';
+  $('nota').textContent = 'Horas de salida: lo más pronto que puede pasar. Horas de llegada: lo más tarde. En los transbordos se dejan al menos 5 min de margen. Los minutos andando son aproximados. ' + AVISO_RECORRIDOS;
 }
 // Origen o destino que no es una parada: tu ubicación (se pide al usuario) o un pueblo / lugar
 function miUbicacion() {
@@ -799,7 +802,9 @@ function ui() {
   document.body.classList.add('con-sesion');   // el botón de ajustes está siempre (también sin cuenta)
   $('gear').classList.remove('oculto');
   const c = $('chip'); c.classList.toggle('live', d);
-  c.innerHTML = d ? '<i class="pto"></i>Tiempo real' : '<i class="pto"></i>Horarios oficiales · <em>Activar tiempo real</em>';
+  c.innerHTML = d ? '<i class="pto"></i>Tiempo real'
+    : Guaguas.tiempoRealDisponible ? '<i class="pto"></i>Horarios oficiales · <em>Activar tiempo real</em>'
+    : '<i class="pto"></i>Tiempo real · <em>próximamente</em>';
   if (!$('sheet').classList.contains('oculto')) ajustes();
 }
 async function loginGoogle() {
@@ -822,7 +827,10 @@ const mostrarIntro = () => $('intro').classList.remove('oculto');
 const ocultarIntro = () => { $('intro').classList.add('oculto'); setTimeout(() => map.invalidateSize(), 50); };
 $('i-free').onclick = () => { Guaguas.setModoDinamico(true); ocultarIntro(); ui(); };
 $('i-google').onclick = async () => { Guaguas.setModoDinamico(true); const r = await iniciarSesion(); if (r === true) { ocultarIntro(); ui(); } };
-$('chip').onclick = () => { if (Guaguas.getModoDinamico()) ajustes(true); else { Guaguas.setModoDinamico(true); ui(); } };
+$('chip').onclick = () => {
+  if (!Guaguas.tiempoRealDisponible) return toast('Muy pronto podrás ver en tiempo real dónde está tu guagua. Mientras tanto, la app muestra los horarios oficiales.');
+  if (Guaguas.getModoDinamico()) ajustes(true); else { Guaguas.setModoDinamico(true); ui(); }
+};
 $('gear').onclick = () => ajustes(true);
 $('sok').onclick = () => $('sheet').classList.add('oculto');
 $('sheet').onclick = e => { if (e.target === $('sheet')) $('sheet').classList.add('oculto'); };
@@ -840,7 +848,8 @@ function ajustes(abrir) {
          : `<div class="grp"><button class="li" id="s-login"><span>Iniciar sesión con Google</span><em>Paradas favoritas</em></button></div>`}
     ${d && p ? `<h4>Fiabilidad</h4><div class="grp"><div class="rel"><div class="relh"><b>${esc(p.nivel)}</b><span>${p.puntos} puntos</span></div><div class="bar"><i style="width:${Math.max(3, Math.min(100, p.puntos))}%"></i></div><small>${p.confirmadas} de ${p.subidas} avisos confirmados por otras personas</small></div></div>` : ''}
     <h4>Preferencias</h4><div class="grp">
-      <div class="li"><span>Datos</span>${seg('modo', [['estatico', 'Horarios'], ['dinamico', 'Tiempo real']], d ? 'dinamico' : 'estatico')}</div>
+      ${Guaguas.tiempoRealDisponible ? `<div class="li"><span>Datos</span>${seg('modo', [['estatico', 'Horarios'], ['dinamico', 'Tiempo real']], d ? 'dinamico' : 'estatico')}</div>`
+        : '<div class="li"><span>Datos</span><em>Horarios oficiales</em></div><div class="li"><span>Tiempo real</span><em>Próximamente</em></div>'}
       <div class="li"><span>Apariencia</span>${seg('tema', [['auto', 'Auto'], ['light', 'Claro'], ['dark', 'Oscuro']], t)}</div>
       <button class="li" id="s-notif"><span>Notificaciones</span><em>${notif}</em></button></div>
     ${u ? `<h4></h4><div class="grp"><button class="li red" id="s-out">Cerrar sesión</button></div>` : ''}`;
