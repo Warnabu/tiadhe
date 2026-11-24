@@ -384,7 +384,11 @@ def quitar_ramales(t, paradas, nucleos, orig, log, fijos):
             elif falta >= FALTA_M:
                 # el original da una vuelta (p. ej. Giniginamar: baja por una calle y sube por otra que no está en la
                 # red de calles): se usa la vuelta del original, si las paradas siguen quedando en la línea
-                nuevo = [tramo[0]] + list(bucle[1:-1]) + [tramo[-1]]
+                # se sigue por la calle hasta el punto más cercano al principio de la vuelta (y desde el más
+                # cercano a su final), para no cruzar en diagonal
+                k1 = min(range(len(tramo)), key=lambda x: m(tramo[x], bucle[1]))
+                k2 = min(range(k1, len(tramo)), key=lambda x: m(tramo[x], bucle[-2]))
+                nuevo = tramo[:k1 + 1] + list(bucle[1:-1]) + tramo[k2:]
                 def dist(q, linea):
                     return min(proyectar_seg(q, x, y)[0] for x, y in zip(linea, linea[1:]))
                 suyas = {s_ for p in tramo for s_ in paradas_cerca(paradas, p) if dist(s_, tramo) < 60}

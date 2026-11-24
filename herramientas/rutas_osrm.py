@@ -16,6 +16,8 @@ Cómo:
      repite. Lo que siga apartándose sale en el informe.
   4. 'k' de cada parada (km desde el origen) se recalcula sobre el trazo y se reescala a la longitud oficial, para no
      cambiar los tiempos.
+  5. Se quitan los muñones (ida y vuelta a una calle sin parada) y se respetan las vueltas que dibujó Tiadhe por un
+     pueblo hasta una parada aunque OSRM no pueda circular por ellas (reglas de limpiar_trazados.py).
 
 Las respuestas de OSRM se guardan en datos/.cache_osrm/rutas/ (se puede repetir sin volver a pedirlas).
 """
@@ -24,6 +26,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ajustar_rutas import DATOS, acumulado, m, proyectar_seg  # noqa: E402
+import limpiar_trazados  # noqa: E402
+from limpiar_trazados import quitar_picos, quitar_ramales  # noqa: E402
 
 SERVIDOR = "https://router.project-osrm.org"
 CACHE = DATOS / ".cache_osrm" / "rutas"
@@ -32,6 +36,7 @@ DESVIO_M = 120        # la ruta no debe apartarse del dibujo original más que e
 DESVIO_LARGO_M = 250  # …durante más de esto
 MAX_PUNTOS = 90       # puntos por consulta (el servidor admite 100)
 VUELTAS = 4
+MUNON_MAX_M = 400     # un ida y vuelta sin parada más corto que esto es un muñón de un punto guía mal enganchado
 MAS_LARGO = 1.4       # un tramo por calles más largo que esto × el dibujo (+150 m) es un rodeo: se usa el dibujo
 
 
@@ -158,7 +163,7 @@ def paradas_de_ida(paradas, pos, t, acc, log):
     return quitar
 
 
-def calcular(num, linea, orig, log):
+def calcular(num, linea, orig, log, antes=None):
     t = [tuple(p) for p in orig]
     acc = acumulado(t)
     escala = acc[-1] / (linea.get("km_total") or acc[-1] / 1000) / 1000
@@ -178,10 +183,13 @@ def calcular(num, linea, orig, log):
     base = [dict(p=(paradas[i]["lat"], paradas[i]["lon"]), x=pos[i], parada=True)
             for i in sorted(range(len(paradas)), key=lambda i: (pos[i], i)) if i not in quitar]
     extra = set()
+    forzadas = set()   # paradas a las que la ruta no llegaba: van como punto de paso obligado (sin sentido)
+    rj_antes = rejilla_de(antes) if antes else None
     ruta, saltados = None, []
-    for vuelta in range(VUELTAS):
+    for vuelta in range(VUELTAS + 3):
         # puntos: paradas de ida + guías del dibujo de Tiadhe entre paradas lejanas + guías añadidas por desvío
-        pts = list(base)
+        pts = list(base) + [dict(p=(paradas[i]["lat"], paradas[i]["lon"]), x=pos[i], parada=True, libre=True)
+                            for i in sorted(forzadas)]
         for a_, b_ in zip(base, base[1:]):
             g = a_["x"] + GUIA_M
             while g < b_["x"] - GUIA_M / 2:
@@ -195,10 +203,10 @@ def calcular(num, linea, orig, log):
             hecho = False
             for j in range(i + 1, min(i + 4, len(pts))):
                 a_, b_ = pts[i], pts[j]
-                r = osrm([(a_["p"][0], a_["p"][1], sentido(a_["x"]), 60 if a_["parada"] else 80),
-                          (b_["p"][0], b_["p"][1], sentido(b_["x"]), 60 if b_["parada"] else 80)])
+                r = osrm([(a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80),
+                          (b_["p"][0], b_["p"][1], None if b_.get("libre") else sentido(b_["x"]), 60 if b_["parada"] else 80)])
                 if r is None:   # sin sentido en el destino (p. ej. una parada al final de un fondo de saco)
-                    r = osrm([(a_["p"][0], a_["p"][1], sentido(a_["x"]), 60 if a_["parada"] else 80),
+                    r = osrm([(a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80),
                               (b_["p"][0], b_["p"][1], None, 60 if b_["parada"] else 80)])
                 tramo_orig = b_["x"] - a_["x"]
                 if r and acumulado(r)[-1] > MAS_LARGO * tramo_orig + 150:
@@ -232,6 +240,24 @@ def calcular(num, linea, orig, log):
                 racha, ini = 0.0, None
         if racha > DESVIO_LARGO_M:
             nuevos.append((ini, racha))
+        # paradas que el trazo de antes tocaba y este no: obligatorias (salvo si su pareja de enfrente ya está)
+        rjr = rejilla_de(ruta)
+        faltan = set()
+        for i, p in enumerate(paradas):
+            q = (p["lat"], p["lon"])
+            if i in forzadas or dist_linea(q, ruta, rjr) <= 30:
+                continue
+            if rj_antes is not None and dist_linea(q, antes, rj_antes) > 30:
+                continue   # tampoco estaba en la línea antes: dato dudoso, no se fuerza
+            pareja = [j for j in range(len(paradas)) if j != i and abs(pos[i] - pos[j]) < 150
+                      and m(q, (paradas[j]["lat"], paradas[j]["lon"])) < 150]
+            if any(dist_linea((paradas[j]["lat"], paradas[j]["lon"]), ruta, rjr) <= 30 for j in pareja):
+                continue
+            faltan.add(i)
+        if faltan:
+            forzadas |= faltan
+            log(f"  {len(faltan)} paradas se quedaban fuera: van como paso obligado {[paradas[i]['n'] for i in faltan][:5]}")
+            continue
         if not nuevos:
             break
         anadidos = 0
@@ -246,10 +272,13 @@ def calcular(num, linea, orig, log):
     return ruta
 
 
-def informe(num, linea, ruta, orig, log):
+def informe(num, linea, ruta, orig, log, resto=()):
     paradas = [(p["lat"], p["lon"], p["n"]) for p in linea["paradas"] if "d" not in p]
-    rj = rejilla_de(ruta)
-    lejos = [(n, round(dist_linea((la, lo), ruta, rj))) for la, lo, n in paradas if dist_linea((la, lo), ruta, rj) > 30]
+    partes = [ruta] + list(resto)   # los ramales (2ª parte de la 05 y la 14) también cuentan para las paradas
+    rjs = [rejilla_de(x) for x in partes]
+    def d_(q):
+        return min(dist_linea(q, x, r) for x, r in zip(partes, rjs))
+    lejos = [(n, round(d_((la, lo)))) for la, lo, n in paradas if d_((la, lo)) > 30]
     t = [tuple(p) for p in orig]
     rjo = rejilla_de(t)
     desv, racha, peor = [], 0.0, 0.0
@@ -283,17 +312,35 @@ def main(argv):
     datos = json.loads(f.read_text(encoding="utf-8"))
     originales = json.loads((DATOS / "trazados_originales.json").read_text(encoding="utf-8"))
     resumen = {}
+    base = json.loads((DATOS / "lineas_base.json").read_text(encoding="utf-8"))["lineas"]
+    nucleos = {n: [(p["lat"], p["lon"]) for p in b["paradas"] if "lat" in p] for n, b in base.items()}
+    todas = {}
+    osm = json.loads((DATOS / "paradas_osm.json").read_text(encoding="utf-8"))
+    for q in [(p["lat"], p["lon"]) for x in datos.values() for p in x.get("paradas", [])] + [(p["lat"], p["lon"]) for p in osm]:
+        todas.setdefault((int(q[0] / 0.002), int(q[1] / 0.002)), []).append(q)
     for num, l in datos.items():
         if a.lineas and num not in a.lineas:
             continue
         ot = originales[num]["trazado"]
         partes = ot if isinstance(ot[0][0], list) else [ot]
         print(f"Línea {num}")
-        ruta = calcular(num, l, partes[0], print)
+        tr_antes = l["trazado"] if isinstance(l["trazado"][0][0], list) else [l["trazado"]]
+        ruta = calcular(num, l, partes[0], print, [tuple(p) for p in tr_antes[0]])
         if not ruta:
             print("  SIN RUTA: se deja como estaba")
             continue
-        resumen[num] = informe(num, l, ruta, partes[0], print)
+        # muñones (ida y vuelta a una calle sin parada, por un punto guía enganchado a una calle de al lado) y
+        # vueltas que OSRM no puede hacer (Giniginamar): las reglas de limpiar_trazados.py
+        fijos = set()
+        limpiar_trazados.RAMAL_MAX_M = MUNON_MAX_M   # solo muñones cortos: los desvíos largos de verdad (Tindaya) se quedan
+        while True:
+            n0 = len(ruta)
+            ruta = quitar_ramales(ruta, todas, nucleos.get(num, []), [tuple(p) for p in partes[0]], print, fijos)
+            ruta = quitar_picos(ruta, todas, print, fijos)
+            if len(ruta) == n0:
+                break
+        resto = [[tuple(p) for p in x] for x in tr_antes[1:]]
+        resumen[num] = informe(num, l, ruta, partes[0], print, resto)
         # k de cada parada sobre el trazo, en la escala de tiempos oficial
         acc = acumulado(ruta)
         L = acc[-1]

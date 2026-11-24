@@ -47,6 +47,7 @@ ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE
 python herramientas/importar_mapas.py      # mapas de Google → datos/trazados_originales.json
 python herramientas/ajustar_rutas.py       # los pega a las calles reales → datos/paradas_reales.json
 python herramientas/limpiar_trazados.py    # quita rodeos fuera de la calle, ramales y picos que deja el ajuste
+python herramientas/rutas_osrm.py          # cada línea, un trazo continuo por sus paradas (OSRM) — lo que se publica
 python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectura)
 ```
 
@@ -97,7 +98,12 @@ Variables: `DATABASE_URL`, `JWT_SECRET`, `FIREBASE_CRED_PATH`, `FIREBASE_AUTH_HO
    servidor solo guarda la clave pública. Un aviso no cambia nada hasta que coinciden ≥2 dispositivos con peso
    suficiente; entonces la hora se corrige para las paradas siguientes y, con el tiempo, se aprende cuánto tarda
    de verdad cada línea.
-4. **Rutas en el mapa** (`herramientas/ajustar_rutas.py`): el trazado de los mapas de Google se "pega" a la red de
+4. **Rutas en el mapa** (`herramientas/rutas_osrm.py`): cada línea es un único trazo continuo calculado con OSRM
+   (calles de OpenStreetMap con su geometría completa) pasando por sus paradas de ida en orden, con el sentido de la
+   marcha en cada una (así toma la calzada correcta y no da medias vueltas) y puntos guía del mapa de Tiadhe; donde la
+   ruta se aparta del mapa de Tiadhe se añaden más guías, y donde no hay calle razonable (falta en OpenStreetMap) se
+   sigue el dibujo de Tiadhe. Imprime un informe por línea (km frente a los oficiales, paradas lejos del trazo, desvíos).
+   Antes se usaba el ajuste a la red de calles (`herramientas/ajustar_rutas.py`): el trazado de los mapas de Google se "pega" a la red de
    calles de OpenStreetMap con un modelo oculto de Markov (el método estándar para ajustar un GPS a un mapa). La ruta
    va por las mismas calles que el original sin inventar rodeos; una segunda pasada da preferencia a las calles que
    usan otras líneas. Donde el original va por una calle que no está en OSM se conserva su dibujo. Las paradas
