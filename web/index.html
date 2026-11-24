@@ -272,7 +272,7 @@ async function datos() {
   lugares = lug; paradas = ps;
   lineas.forEach(l => {
     colores[l.num] = l.color;
-    rutas[l.num] = l.tramos.map(t => { const c = L.polyline(t.p, { color: l.color, weight: 3.5, opacity: .75, interactive: false }); c._base = t.p; c._o = t.o; return c.addTo(map); });
+    rutas[l.num] = unir(l.tramos).map(t => { const c = L.polyline(t.p, { color: l.color, weight: 3.5, opacity: .75, interactive: false, lineJoin: 'round' }); c._base = t.p; c._os = t.os; return c.addTo(map); });
   });
   recolocar();
   osm.forEach(p => marcasParadas.push(L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
@@ -286,24 +286,65 @@ function foco(p, z = 15) {
 }
 // Donde varias líneas comparten calle se dibujan en paralelo (como un plano de metro): cada tramo trae su
 // desplazamiento lateral "o" en anchos de línea, que aquí se pasa a píxeles para el zoom actual.
-function desplazar(lls, px) {
-  if (!px || lls.length < 2) return lls;
-  const P = lls.map(x => map.latLngToLayerPoint(x)), out = [];
+// Cada línea es UNA polilínea continua: los tramos seguidos se unen y cada segmento guarda su desplazamiento.
+function unir(tramos) {
+  const partes = [];
+  let cur = null;
+  const junto = (a, b) => Math.abs(a[0] - b[0]) < 2e-5 && Math.abs(a[1] - b[1]) < 2e-5;
+  tramos.forEach(t => {
+    if (t.p.length < 2) return;
+    if (cur && junto(cur.p[cur.p.length - 1], t.p[0])) {
+      for (let i = 1; i < t.p.length; i++) { cur.p.push(t.p[i]); cur.os.push(t.o); }
+    } else {
+      cur = { p: t.p.slice(), os: t.p.slice(1).map(() => t.o) };
+      partes.push(cur);
+    }
+  });
+  return partes;
+}
+// Desplazamiento lateral en píxeles (os[k] = el del segmento k, en anchos de línea). Donde cambia, la línea se va
+// apartando poco a poco a lo largo de TRANSICION px (curva suave), en vez de saltar de golpe.
+const TRANSICION = 36;
+function desplazar(lls, os, paso) {
+  if (lls.length < 2 || os.every(v => !v)) return lls;
+  const P = lls.map(x => map.latLngToLayerPoint(x)), n = P.length, d = [0];
+  for (let i = 1; i < n; i++) d.push(d[i - 1] + P[i].distanceTo(P[i - 1]));
+  const bordes = [];
+  for (let k = 1; k < n - 1; k++) if (os[k] !== os[k - 1]) bordes.push({ s: d[k], a: os[k - 1] * paso, b: os[k] * paso });
+  const off = (s, k) => {
+    let v = os[k] * paso;
+    for (const B of bordes) {
+      if (Math.abs(s - B.s) < TRANSICION / 2) { const u = (s - B.s) / TRANSICION + .5; v = B.a + (B.b - B.a) * u * u * (3 - 2 * u); }
+    }
+    return v;
+  };
   const nor = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy); return l < 1e-6 ? null : { x: -dy / l, y: dx / l }; };
-  for (let i = 0; i < P.length; i++) {
-    const n1 = i > 0 ? nor(P[i - 1], P[i]) : null, n2 = i < P.length - 1 ? nor(P[i], P[i + 1]) : null;
-    const a = n1 || n2, b = n2 || n1;
-    if (!a) { out.push(lls[i]); continue; }
+  const extra = bordes.flatMap(B => [-.5, -.3, -.1, .1, .3, .5].map(f => B.s + f * TRANSICION)).sort((a, b) => a - b);
+  const out = [];
+  let e = 0;
+  for (let k = 0; k < n; k++) {
+    if (k > 0) {
+      const n1 = nor(P[k - 1], P[k]);
+      for (; e < extra.length && extra[e] < d[k]; e++) {
+        const s = extra[e];
+        if (s <= d[k - 1] || !n1) continue;
+        const u = (s - d[k - 1]) / (d[k] - d[k - 1]), v = off(s, k - 1);
+        out.push(map.layerPointToLatLng(L.point(P[k - 1].x + (P[k].x - P[k - 1].x) * u + n1.x * v, P[k - 1].y + (P[k].y - P[k - 1].y) * u + n1.y * v)));
+      }
+    }
+    const n1 = k > 0 ? nor(P[k - 1], P[k]) : null, n2 = k < n - 1 ? nor(P[k], P[k + 1]) : null;
+    const a = n1 || n2, b = n2 || n1, v = off(d[k], Math.min(k, n - 2));
+    if (!a || !v) { out.push(lls[k]); continue; }
     let nx = a.x + b.x, ny = a.y + b.y; const l = Math.hypot(nx, ny);
     if (l < 1e-6) { nx = a.x; ny = a.y; } else { nx /= l; ny /= l; }
-    const m = px / Math.max(.5, nx * a.x + ny * a.y);   // inglete limitado en las curvas cerradas
-    out.push(map.layerPointToLatLng(L.point(P[i].x + nx * m, P[i].y + ny * m)));
+    const mm = v / Math.max(.5, nx * a.x + ny * a.y);   // inglete limitado en las curvas cerradas
+    out.push(map.layerPointToLatLng(L.point(P[k].x + nx * mm, P[k].y + ny * mm)));
   }
   return out;
 }
 function recolocar() {
   const paso = map.getZoom() >= 13 ? 3.5 : map.getZoom() >= 11 ? 2.5 : 1.5;
-  Object.values(rutas).forEach(cs => cs.forEach(c => c.setLatLngs(desplazar(c._base, c._o * paso))));
+  Object.values(rutas).forEach(cs => cs.forEach(c => c.setLatLngs(desplazar(c._base, c._os, paso))));
 }
 map.on('zoomend', recolocar);
 // Al elegir una parada se resaltan los recorridos de sus líneas y se atenúan los demás.

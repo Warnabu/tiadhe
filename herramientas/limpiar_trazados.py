@@ -14,6 +14,8 @@ Se ejecuta después de ajustar_rutas.py y usa su misma red de calles (datos/.cac
   2. Ramales de ida y vuelta. Si el trazado se mete por una calle y vuelve por ella al mismo punto sin que haya una
      parada de la línea en la punta (p. ej. el ramal sin salida del enlace de La Lajita), se quita. Solo los que
      inventó el ajuste: si el mapa original de Tiadhe también entra y vuelve (un desvío de verdad), se queda.
+     Si donde el ajuste va y vuelve por la misma calle el original da una vuelta (baja por una y sube por otra que no
+     está en la red de calles, como en Giniginamar), se usa la vuelta del original.
   3. Picos: un vértice en el que el trazado da media vuelta en seco se quita.
 """
 import argparse, heapq, json, math, sys
@@ -25,10 +27,14 @@ from ajustar_rutas import DATOS, Red, acumulado, m, proyectar_seg, teselas_neces
 FUERA_M = 25         # una muestra a más de esto de cualquier calle está "fuera de la calle"
 MUESTRA_M = 10
 EN_CALLE_M = 12      # los extremos de un tramo arreglado tienen que estar en la calle
-MAS_LARGO = 1.35     # el camino por calles puede ser como mucho así de largo que el dibujo (+150 m)
+MAS_LARGO = 1.1       # el camino por calles no puede ser más largo que el dibujo (+10 % y 30 m): si lo es, se inventa un rodeo
 RAMAL_MAX_M = 1200   # longitud máxima de un ramal de ida y vuelta
 RAMAL_MIN_M = 40
 PARADA_PUNTA_M = 60  # con una parada de la línea en el ramal, el ramal se queda (la guagua entra a por ella)
+FALTA_M = 80         # una vuelta del original se usa si al ajuste le falta un tramo seguido así de largo…
+VUELTA_MAX_M = 600   # …y si es corta (un pueblo como Giniginamar); las largas se avisan
+LEJOS_M = 35         # …a más de esto (la imprecisión normal del dibujo a mano no cuenta)
+RECTA_LARGA_M = 250  # un segmento del original así de largo es un atajo dibujado a mano, no una calle
 ORIGINAL_M = 60      # ni si el trazado original de Tiadhe llega a la punta (solo se quitan los ramales que inventó el ajuste)
 PICO_GRADOS = 150    # media vuelta en seco en un vértice: es un pico del ajuste, no una calle
 NUCLEO_M = 300       # ni si cerca de la punta hay un núcleo de la línea (lineas_base.json, coordenadas aproximadas:
@@ -85,7 +91,7 @@ def camino_calles(red, a, b, limite):
     return [qa] + [red.pos[n] for n in reversed(nodos)] + [qb]
 
 
-def arreglar_fuera(red, t, log):
+def arreglar_fuera(red, t, orig, log):
     """Cambia los tramos fuera de la calle por el camino por calles. Devuelve la polilínea nueva."""
     fuera = []
     for a, b in zip(t, t[1:]):
@@ -115,7 +121,10 @@ def arreglar_fuera(red, t, log):
     for a, b in tramos:
         res += t[ult:a]
         largo = acumulado(t[a:b + 1])[-1]
-        cam = camino_calles(red, t[a], t[b], largo * MAS_LARGO + 150)
+        cam = camino_calles(red, t[a], t[b], largo * MAS_LARGO + 30)
+        if cam and not fiel_al_original(cam, orig):
+            log(f"    AVISO el camino por calles en {t[a][0]:.5f},{t[a][1]:.5f} se aleja del original de Tiadhe: se deja el dibujo")
+            cam = None
         if cam:
             res += [t[a]] + cam[1:-1]
             log(f"    tramo fuera de la calle en {t[a][0]:.5f},{t[a][1]:.5f}: {largo:.0f} m dibujados → "
@@ -125,6 +134,58 @@ def arreglar_fuera(red, t, log):
             log(f"    AVISO sin arreglo: tramo fuera de la calle en {t[a][0]:.5f},{t[a][1]:.5f} ({largo:.0f} m)")
         ult = b
     return res + t[ult:]
+
+
+def segmento_original(orig, p):
+    """(distancia de p al trazado original, longitud del segmento original más cercano)."""
+    mejor = (1e9, 0.0)
+    for a, b in zip(orig, orig[1:]):
+        if min(a[0], b[0]) - 0.01 < p[0] < max(a[0], b[0]) + 0.01 and min(a[1], b[1]) - 0.01 < p[1] < max(a[1], b[1]) + 0.01:
+            d = proyectar_seg(p, a, b)[0]
+            if d < mejor[0]:
+                mejor = (d, m(a, b))
+    return mejor
+
+
+def fiel_al_original(camino, orig):
+    """El camino por calles va por donde dibujó Tiadhe (a ≤ ORIGINAL_M), salvo donde el original es una recta larga
+    y poco fiable (un atajo dibujado a mano de punta a punta, como el de la FV-2 en Costa Calma)."""
+    for q in camino:
+        d, largo = segmento_original(orig, q)
+        if d > ORIGINAL_M and largo < RECTA_LARGA_M:
+            return False
+    return True
+
+
+def bucle_original(orig, inicio, punta, fin, largo):
+    """Si el original sale de 'inicio', pasa por la punta y vuelve a 'fin' por otro sitio (un bucle), sus puntos."""
+    for i, p in enumerate(orig):
+        if m(p, inicio) >= ORIGINAL_M:
+            continue
+        L, k = 0.0, None
+        for j in range(i + 1, len(orig)):
+            L += m(orig[j - 1], orig[j])
+            if L > 3 * largo + 300:
+                break
+            if k is None and m(orig[j], punta) < ORIGINAL_M:
+                k = j
+            if k is not None and j > k and m(orig[j], fin) < ORIGINAL_M:
+                return orig[i:j + 1]
+    return None
+
+
+def calle_que_falta(bucle, tramo):
+    """Metros seguidos del bucle original que quedan lejos (> LEJOS_M) del trazado ajustado: la calle que se salta."""
+    def lejos(q):
+        return min(proyectar_seg(q, x, y)[0] for x, y in zip(tramo, tramo[1:])) > LEJOS_M
+    mayor = racha = 0.0
+    for a, b in zip(bucle, bucle[1:]):
+        n = max(1, int(m(a, b) / 10))
+        for k in range(n):
+            q = (a[0] + (b[0] - a[0]) * (k + .5) / n, a[1] + (b[1] - a[1]) * (k + .5) / n)
+            racha = racha + m(a, b) / n if lejos(q) else 0.0
+            mayor = max(mayor, racha)
+    return mayor
 
 
 def paradas_cerca(paradas, p):
@@ -148,7 +209,7 @@ def ida_y_vuelta_original(orig, inicio, punta, largo):
     return False
 
 
-def quitar_ramales(t, paradas, nucleos, orig, log):
+def quitar_ramales(t, paradas, nucleos, orig, log, fijos):
     """Quita idas y vueltas por la misma calle sin parada en la punta."""
     i = 0
     while i < len(t) - 2:
@@ -159,6 +220,8 @@ def quitar_ramales(t, paradas, nucleos, orig, log):
                 break
             if L >= RAMAL_MIN_M and m(t[i], t[j]) < 15:
                 j_ok = j
+        if j_ok is not None and any(p in fijos for p in t[i + 1:j_ok]):
+            j_ok = None   # ahí ya se puso la vuelta del original: no se toca más
         if j_ok is not None:
             tramo = t[i:j_ok + 1]
             acc = acumulado(tramo)
@@ -173,6 +236,25 @@ def quitar_ramales(t, paradas, nucleos, orig, log):
             con_parada = any(m(p, s) < PARADA_PUNTA_M for p in lejos for s in paradas_cerca(paradas, p))
             con_nucleo = any(m(tramo[k], s) < NUCLEO_M for s in nucleos)
             dibujado = ida_y_vuelta_original(orig, tramo[0], tramo[k], acc[-1])   # Tiadhe lo dibujó así: se queda
+            bucle = bucle_original(orig, tramo[0], tramo[k], tramo[-1], acc[-1]) if alejado else None
+            falta = calle_que_falta(bucle, tramo) if bucle else 0
+            if falta >= FALTA_M and acumulado(bucle)[-1] > VUELTA_MAX_M:
+                log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: al ajuste le faltan {falta:.0f} m de la que dibujó "
+                    f"Tiadhe, pero es larga ({acumulado(bucle)[-1]:.0f} m) y no se cambia por el dibujo a mano")
+            elif falta >= FALTA_M:
+                # el original da una vuelta (p. ej. Giniginamar: baja por una calle y sube por otra que no está en la
+                # red de calles): se usa la vuelta del original, si las paradas siguen quedando en la línea
+                nuevo = [tramo[0]] + list(bucle[1:-1]) + [tramo[-1]]
+                def dist(q, linea):
+                    return min(proyectar_seg(q, x, y)[0] for x, y in zip(linea, linea[1:]))
+                suyas = {s_ for p in tramo for s_ in paradas_cerca(paradas, p) if dist(s_, tramo) < 60}
+                if all(dist(s_, nuevo) <= max(25, dist(s_, tramo) + 10) for s_ in suyas):   # ninguna parada se aleja
+                    log(f"    vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: el ajuste se salta parte de la que dibujó "
+                        f"Tiadhe ({falta:.0f} m de calle sin recorrer) → se usa la del original ({acumulado(nuevo)[-1]:.0f} m)")
+                    fijos.update(nuevo)
+                    t = t[:i] + nuevo + t[j_ok + 1:]
+                    i += len(nuevo)
+                    continue
             if misma and alejado and not con_parada and not con_nucleo and not dibujado:
                 log(f"    ramal de ida y vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: {acc[-1]:.0f} m sin parada "
                     f"(la más cercana a la punta, a {punta:.0f} m) → quitado")
@@ -193,14 +275,14 @@ def angulo(a, b, c):
     return math.degrees(math.acos(max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))))
 
 
-def quitar_picos(t, paradas, log):
+def quitar_picos(t, paradas, log, fijos=frozenset()):
     """Quita los vértices en los que el trazado da media vuelta en seco (picos y zigzags de un solo punto).
     Junto a una parada no: ahí la media vuelta es la guagua que entra hasta la parada y vuelve (La Pared, Tindaya…)."""
     n0, cambio = len(t), True
     while cambio:
         cambio, res = False, [t[0]]
         for i in range(1, len(t) - 1):
-            if angulo(res[-1], t[i], t[i + 1]) > PICO_GRADOS and \
+            if t[i] not in fijos and angulo(res[-1], t[i], t[i + 1]) > PICO_GRADOS and \
                     not any(m(t[i], s) < PARADA_PUNTA_M for s in paradas_cerca(paradas, t[i])):
                 cambio = True
                 continue
@@ -240,11 +322,12 @@ def main(argv):
         nuevas = []
         for t in partes:
             t = [tuple(p) for p in t]
-            t = arreglar_fuera(red, t, print)
+            t = arreglar_fuera(red, t, orig.get(num, []), print)
+            fijos = set()   # puntos puestos desde el original (vueltas): no se vuelven a tocar
             while True:   # hasta que no cambie nada (quitar un pico puede dejar a la vista un ramal)
                 n = len(t)
-                t = quitar_ramales(t, todas, nucleos.get(num, []), orig.get(num, []), print)
-                t = quitar_picos(t, todas, print)
+                t = quitar_ramales(t, todas, nucleos.get(num, []), orig.get(num, []), print, fijos)
+                t = quitar_picos(t, todas, print, fijos)
                 if len(t) == n:
                     break
             nuevas.append([[round(x, 6), round(y, 6)] for x, y in t])
