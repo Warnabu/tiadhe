@@ -54,6 +54,15 @@ body.con-sesion #top{right:calc(max(10px,env(safe-area-inset-right)) + 46px)}
 #chip .pto{width:7px;height:7px;border-radius:50%;background:var(--tx2)}
 #chip.live .pto{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
 #chip em{font-style:normal;color:var(--acc)}
+#chips{display:flex;gap:6px;align-self:flex-start}
+#filtro{display:flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:15px;font-size:12.5px;font-weight:500;color:var(--tx)}
+#filtro .pto{width:9px;height:9px;border-radius:50%;background:conic-gradient(#e6194b 0 25%,#3cb44b 0 50%,#4363d8 0 75%,#f58231 0)}
+#filtro.on{color:var(--tx);font-weight:600}
+#filtro.on .pto{background:var(--c)}
+.lineas{display:grid;grid-template-columns:1fr;gap:0;padding:0 2px 8px}
+.lineas button{display:flex;align-items:center;gap:12px;padding:9px 4px;border-top:1px solid var(--sep);text-align:left;font-size:15px;color:var(--tx)}
+.lineas button:first-child{border-top:0}
+.lineas .badge{flex:none}
 #gear{position:fixed;z-index:500;top:max(10px,env(safe-area-inset-top));right:max(6px,env(safe-area-inset-right));width:44px;height:48px;display:grid;place-items:center;color:var(--tx);filter:drop-shadow(0 0 1.5px var(--halo)) drop-shadow(0 0 4px var(--halo))}
 #gear svg{width:24px;height:24px}
 /* panel de parada */
@@ -152,7 +161,7 @@ html[data-t=dark] .av{color:#06222e}
     <button id="gps" aria-label="Paradas cerca de mí"><svg class="i" viewBox="0 0 24 24"><path d="M3 11 21 3l-8 18-2-8z"/></svg></button>
   </div>
   <div id="sug" class="glass oculto"></div>
-  <button id="chip" class="glass" aria-label="Modo"></button>
+  <div id="chips"><button id="chip" class="glass" aria-label="Modo"></button><button id="filtro" class="glass" aria-label="Ver una sola línea"><i class="pto"></i>Líneas</button></div>
 </div>
 <button id="gear" class="oculto" aria-label="Ajustes"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
 
@@ -265,21 +274,50 @@ mq.addEventListener('change', tema); tema();
 addEventListener('resize', () => map.invalidateSize());
 
 // ── Datos ──
-let marcasParadas = [], capaCamino = null;
+let marcasParadas = [], capaCamino = null, nombres = {}, lineaSola = null;
 let paradas = [], lugares = [], colores = {}, rutas = {}, actual = null, filtro = null, timer = null, marcaSel = null, marcaYo = null, marcadas = new Set();
 async function datos() {
   const [lineas, ps, osm, lug] = await Promise.all([json('/api/lineas?bandas=1'), json('/api/paradas'), json('/api/osm'), json('/api/lugares')]);
   lugares = lug; paradas = ps;
   lineas.forEach(l => {
-    colores[l.num] = l.color;
+    colores[l.num] = l.color; nombres[l.num] = l.nombre;
     rutas[l.num] = unir(l.tramos).map(t => { const c = L.polyline(t.p, { color: l.color, weight: 3.5, opacity: .75, interactive: false, lineJoin: 'round' }); c._base = t.p; c._os = t.os; return c.addTo(map); });
   });
   recolocar();
-  osm.forEach(p => marcasParadas.push(L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
-    .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon }))));
-  ps.forEach(p => marcasParadas.push(L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
-    .on('click', () => elegir({ tipo: 'parada', ...p }))));
+  osm.forEach(p => { const mk = L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#8b95a1', fillOpacity: .9 }).addTo(map)
+    .on('click', () => elegir({ tipo: 'osm', nombre: p.n, lat: p.lat, lon: p.lon })); mk._osm = true; marcasParadas.push(mk); });
+  ps.forEach(p => { const mk = L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#0b6e99', fillOpacity: 1 }).addTo(map)
+    .on('click', () => elegir({ tipo: 'parada', ...p })); mk._lineas = p.lineas; marcasParadas.push(mk); });
+  try { const g = localStorage.getItem('lineaSola'); if (g && rutas[g]) soloLinea(g, false); } catch (_) {}
 }
+// ── Ver una sola línea: en el mapa queda solo esa línea (centrada en su calle) y sus paradas ──
+function mostrarParadas() {
+  marcasParadas.forEach(mk => {
+    const ver = !lineaSola || (!mk._osm && mk._lineas && mk._lineas.includes(lineaSola));
+    if (ver) mk.addTo(map); else map.removeLayer(mk);
+  });
+}
+function soloLinea(num, encuadrar = true) {
+  lineaSola = num && rutas[num] ? num : null;
+  try { if (lineaSola) localStorage.setItem('lineaSola', lineaSola); else localStorage.removeItem('lineaSola'); } catch (_) {}
+  const f = $('filtro');
+  f.classList.toggle('on', !!lineaSola);
+  f.style.setProperty('--c', lineaSola ? colores[lineaSola] : '');
+  f.innerHTML = lineaSola ? `<i class="pto"></i>Línea ${esc(lineaSola)} <span aria-hidden="true">✕</span>` : '<i class="pto"></i>Líneas';
+  f.setAttribute('aria-label', lineaSola ? 'Ver todas las líneas' : 'Ver una sola línea');
+  if (!capaCamino) { mostrarParadas(); resaltar(lineaSola ? [lineaSola] : (actual && actual.tipo === 'parada' ? actual.lineas : null)); }
+  recolocar();
+  if (lineaSola && encuadrar) {
+    const pts = rutas[lineaSola].flatMap(c => c._base);
+    map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [30, ancho() ? 30 : 100], paddingBottomRight: [30, ancho() ? 30 : Math.round(innerHeight * .45)] });
+  }
+}
+function elegirLinea() {
+  $('shead').querySelector('b').textContent = 'Ver una sola línea';
+  $('sbody').innerHTML = `<div class="grp lineas">${Object.keys(rutas).sort((a, b) => a - b).map(n => `<button data-filtro="${esc(n)}"><span class="badge" style="background:${esc(colores[n])}">${esc(n)}</span><span>${esc(nombres[n] || '')}</span></button>`).join('')}</div>`;
+  $('sheet').classList.remove('oculto');
+}
+$('filtro').onclick = () => { if (lineaSola) soloLinea(null); else elegirLinea(); };
 function foco(p, z = 15) {
   map.setView([p.lat, p.lon], Math.max(map.getZoom(), z), { animate: false });
   if (!ancho()) map.panBy([0, Math.round(innerHeight * .2)], { animate: false });
@@ -344,15 +382,16 @@ function desplazar(lls, os, paso) {
 }
 function recolocar() {
   const paso = map.getZoom() >= 13 ? 3.5 : map.getZoom() >= 11 ? 2.5 : 1.5;
-  Object.values(rutas).forEach(cs => cs.forEach(c => c.setLatLngs(desplazar(c._base, c._os, paso))));
+  Object.entries(rutas).forEach(([n, cs]) => cs.forEach(c => c.setLatLngs(lineaSola === n ? c._base : desplazar(c._base, c._os, paso))));
 }
 map.on('zoomend', recolocar);
 // Al elegir una parada se resaltan los recorridos de sus líneas y se atenúan los demás.
 function resaltar(nums) {
+  if (lineaSola) nums = [lineaSola];   // viendo una sola línea: solo esa
   const set = nums && nums.length ? new Set(nums) : null;
   Object.entries(rutas).forEach(([n, cs]) => {
     const on = !set || set.has(n);
-    cs.forEach(c => c.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : .12 }));   // sin bringToFront: taparía las paradas
+    cs.forEach(c => c.setStyle({ weight: set && on ? 5 : 3.5, opacity: on ? (set ? .95 : .75) : (lineaSola ? 0 : .12) }));   // sin bringToFront: taparía las paradas
   });
 }
 // Paradas recientes (en este navegador) y enlace compartible ?parada=<id>
@@ -536,7 +575,7 @@ function finRuta() { rutaDesde = null; $('buscar').placeholder = 'Buscar parada 
 function quitarCamino() {
   if (!capaCamino) return;
   map.removeLayer(capaCamino); capaCamino = null;
-  marcasParadas.forEach(m => m.addTo(map));
+  mostrarParadas();
   if (marcaYo) marcaYo.addTo(map);
   document.querySelectorAll('#lista .row').forEach(x => { x.style.display = ''; x.querySelector('.yo')?.remove(); });
   document.querySelectorAll('#lista h3').forEach(x => x.style.display = '');
@@ -790,6 +829,7 @@ $('sheet').onclick = e => { if (e.target === $('sheet')) $('sheet').classList.ad
 
 function ajustes(abrir) {
   if (abrir) $('sheet').classList.remove('oculto');
+  $('shead').querySelector('b').textContent = 'Ajustes';
   const u = usuario(), d = Guaguas.getModoDinamico(), p = Guaguas.perfil(), t = localStorage.getItem('tema') || 'auto';
   const nombre = u ? (u.displayName || u.email || 'Mi cuenta') : 'Mi cuenta';
   const desde = u && u.metadata && u.metadata.creationTime ? new Date(u.metadata.creationTime).toLocaleDateString('es', { month: 'long', year: 'numeric' }) : '';
@@ -807,6 +847,7 @@ function ajustes(abrir) {
 }
 $('sbody').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.filtro) { $('sheet').classList.add('oculto'); soloLinea(b.dataset.filtro); abrirLinea(b.dataset.filtro); return; }
   const id = b.parentElement.dataset && b.parentElement.dataset.id;
   if (id === 'tema') { localStorage.setItem('tema', b.dataset.v); tema(); ajustes(); }
   else if (id === 'modo') Guaguas.setModoDinamico(b.dataset.v === 'dinamico');

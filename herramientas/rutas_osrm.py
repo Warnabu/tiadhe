@@ -16,6 +16,7 @@ Cómo:
      repite. Lo que siga apartándose sale en el informe.
   4. 'k' de cada parada (km desde el origen) se recalcula sobre el trazo y se reescala a la longitud oficial, para no
      cambiar los tiempos.
+  6. Consenso: si una línea se separa sola de las demás en un tramo corto y vuelve a juntarse, va con ellas.
   5. Se quitan los muñones (ida y vuelta a una calle sin parada) y se respetan las vueltas que dibujó Tiadhe por un
      pueblo hasta una parada aunque OSRM no pueda circular por ellas (reglas de limpiar_trazados.py).
 
@@ -27,7 +28,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ajustar_rutas import DATOS, acumulado, m, proyectar_seg  # noqa: E402
 import limpiar_trazados  # noqa: E402
-from limpiar_trazados import quitar_picos, quitar_ramales  # noqa: E402
+from limpiar_trazados import RedLineas, quitar_ramales, unificar  # noqa: E402
+from ajustar_rutas import Red, teselas_necesarias  # noqa: E402
 
 SERVIDOR = "https://router.project-osrm.org"
 CACHE = DATOS / ".cache_osrm" / "rutas"
@@ -36,6 +38,8 @@ DESVIO_M = 120        # la ruta no debe apartarse del dibujo original más que e
 DESVIO_LARGO_M = 250  # …durante más de esto
 MAX_PUNTOS = 90       # puntos por consulta (el servidor admite 100)
 VUELTAS = 4
+CONSENSO_DIBUJO_MAX_M = 3500   # … o esto, en las líneas que tuvieron que seguir el dibujo de Tiadhe en algún tramo
+CONSENSO_MAX_M = 1500 # tramo máximo en el que una línea, sola, se separa de las demás y vuelve a juntarse
 MUNON_MAX_M = 400     # un ida y vuelta sin parada más corto que esto es un muñón de un punto guía mal enganchado
 MAS_LARGO = 1.4       # un tramo por calles más largo que esto × el dibujo (+150 m) es un rodeo: se usa el dibujo
 
@@ -163,6 +167,60 @@ def paradas_de_ida(paradas, pos, t, acc, log):
     return quitar
 
 
+con_dibujo = {}   # línea → si algún tramo tuvo que seguir el dibujo de Tiadhe
+
+
+def trazar(pts, t, acc, sentido):
+    """Une los puntos (en orden) con tramos de OSRM. Si un tramo falla y sale de un punto guía, ese punto se quita y se
+    vuelve a empezar; si sale de una parada, ese tramo sigue el dibujo de Tiadhe (desde donde acabó la ruta, por los
+    puntos del dibujo entre ambos, en orden). Nunca une con una recta dos tramos que no se tocan."""
+    pts = list(pts)
+    por_dibujo = set()   # índices (en pts) de paradas desde las que el tramo siguiente va por el dibujo
+    while True:
+        ruta, saltados, dibujo, i, fallo = [], [], [], 0, None
+        while i < len(pts) - 1:
+            a_ = pts[i]
+            if i in por_dibujo:
+                b_ = pts[i + 1]
+                trozo = [q for q, d in zip(t, acc) if a_["x"] < d < b_["x"]] + [b_["p"]]
+                ruta += trozo if ruta else [a_["p"]] + trozo
+                dibujo.append((round(a_["p"][0], 5), round(a_["p"][1], 5), round(b_["x"] - a_["x"])))
+                i += 1
+                continue
+            hecho = False
+            for j in range(i + 1, min(i + 4, len(pts))):
+                b_ = pts[j]
+                ini = (a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80)
+                r = osrm([ini, (b_["p"][0], b_["p"][1], None if b_.get("libre") else sentido(b_["x"]), 60 if b_["parada"] else 80)])
+                if r is None and j == len(pts) - 1:   # sin sentido en el destino: solo la última parada (fondo de saco)
+                    r = osrm([ini, (b_["p"][0], b_["p"][1], None, 60)])
+                if r is None and a_["parada"]:
+                    # saliendo de una parada en un fondo de saco la guagua da la vuelta (p. ej. el Hotel Gorriones)
+                    r = osrm([(a_["p"][0], a_["p"][1], None, 60),
+                              (b_["p"][0], b_["p"][1], None if b_.get("libre") else sentido(b_["x"]), 60 if b_["parada"] else 80)])
+                if r and acumulado(r)[-1] > MAS_LARGO * (b_["x"] - a_["x"]) + 150:
+                    r = None   # rodeo: la calle que usa la guagua no está (bien) en el mapa de calles
+                if r and ruta and m(ruta[-1], r[0]) > 20:
+                    # el tramo anterior acabó enganchado en otra calle: se une por calles, nunca con una recta
+                    puente = osrm([(ruta[-1][0], ruta[-1][1], None, 30), (r[0][0], r[0][1], None, 30)])
+                    r = puente[:-1] + r if puente and acumulado(puente)[-1] <= 1.5 * m(ruta[-1], r[0]) + 50 else None
+                if r:
+                    ruta += r if not ruta else r[1:]
+                    saltados += pts[i + 1:j]
+                    i, hecho = j, True
+                    break
+            if not hecho:
+                fallo = i
+                break
+        if fallo is None:
+            return ruta, saltados, dibujo
+        if not pts[fallo]["parada"] and fallo > 0:
+            pts.pop(fallo)   # punto guía sin salida (p. ej. en la calzada que no es): fuera, y otra vez
+            por_dibujo = {k - (k > fallo) for k in por_dibujo}
+        else:
+            por_dibujo.add(fallo)
+
+
 def calcular(num, linea, orig, log, antes=None):
     t = [tuple(p) for p in orig]
     acc = acumulado(t)
@@ -198,31 +256,8 @@ def calcular(num, linea, orig, log, antes=None):
             pts.append(dict(p=punto_en(t, acc, g)[0], x=g, parada=False))
         pts.sort(key=lambda q: q["x"])
         # 2) ruta tramo a tramo (cada uno con el sentido de la marcha en sus dos extremos)
-        ruta, saltados, dibujo, i = [], [], [], 0
-        while i < len(pts) - 1:
-            hecho = False
-            for j in range(i + 1, min(i + 4, len(pts))):
-                a_, b_ = pts[i], pts[j]
-                r = osrm([(a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80),
-                          (b_["p"][0], b_["p"][1], None if b_.get("libre") else sentido(b_["x"]), 60 if b_["parada"] else 80)])
-                if r is None:   # sin sentido en el destino (p. ej. una parada al final de un fondo de saco)
-                    r = osrm([(a_["p"][0], a_["p"][1], None if a_.get("libre") else sentido(a_["x"]), 60 if a_["parada"] else 80),
-                              (b_["p"][0], b_["p"][1], None, 60 if b_["parada"] else 80)])
-                tramo_orig = b_["x"] - a_["x"]
-                if r and acumulado(r)[-1] > MAS_LARGO * tramo_orig + 150:
-                    r = None   # rodeo: la calle que usa la guagua no está (bien) en el mapa de calles
-                if r:
-                    ruta += r if not ruta else r[1:]
-                    saltados += pts[i + 1:j]
-                    i, hecho = j, True
-                    break
-            if not hecho:
-                # sin camino razonable por calles: este tramo sigue el dibujo de Tiadhe hasta el siguiente punto
-                a_, b_ = pts[i], pts[i + 1]
-                trozo = [a_["p"]] + [q for q, d in zip(t, acc) if a_["x"] < d < b_["x"]] + [b_["p"]]
-                ruta += trozo if not ruta else trozo[1:]
-                dibujo.append((round(a_["p"][0], 5), round(a_["p"][1], 5), round(b_["x"] - a_["x"])))
-                i += 1
+        ruta, saltados, dibujo = trazar(pts, t, acc, sentido)
+        con_dibujo[num] = bool(dibujo)
         if dibujo:
             log(f"  {len(dibujo)} tramos sin camino razonable por calles: siguen el dibujo de Tiadhe {dibujo[:6]}")
         if saltados:
@@ -270,6 +305,28 @@ def calcular(num, linea, orig, log, antes=None):
         if not anadidos:
             break
     return ruta
+
+
+_bucle_original = limpiar_trazados.bucle_original
+
+
+def bucle_validado(orig, inicio, punta, fin, largo):
+    """La vuelta del dibujo de Tiadhe solo se copia si OSRM NO puede recorrerla por calles (Giniginamar: Calle El Carmen
+    no está para coches). Si puede (Hotel Gorriones: la C. Crisálida existe), el dibujo solo era impreciso."""
+    b = _bucle_original(orig, inicio, punta, fin, largo)
+    if not b:
+        return None
+    mid = b[len(b) // 2]
+    r = osrm([(b[0][0], b[0][1], None, 80), (mid[0], mid[1], None, 80), (b[-1][0], b[-1][1], None, 80)])
+    if r and acumulado(r)[-1] <= 1.3 * acumulado(b)[-1] + 100:
+        rj = rejilla_de(r)
+        muestras = [(x[0] + (y[0] - x[0]) * k / 4, x[1] + (y[1] - x[1]) * k / 4) for x, y in zip(b, b[1:]) for k in range(4)]
+        if sum(dist_linea(q, r, rj) < 40 for q in muestras) >= 0.8 * len(muestras):
+            return None
+    return b
+
+
+limpiar_trazados.bucle_original = bucle_validado
 
 
 def informe(num, linea, ruta, orig, log, resto=()):
@@ -336,7 +393,8 @@ def main(argv):
         while True:
             n0 = len(ruta)
             ruta = quitar_ramales(ruta, todas, nucleos.get(num, []), [tuple(p) for p in partes[0]], print, fijos)
-            ruta = quitar_picos(ruta, todas, print, fijos)
+            # (sin quitar «picos»: en un trazado de OSRM las curvas cerradas son calles de verdad; quitarlas en
+            # cadena convertía las curvas de la C. Crisálida en una recta por el campo)
             if len(ruta) == n0:
                 break
         resto = [[tuple(p) for p in x] for x in tr_antes[1:]]
@@ -356,6 +414,27 @@ def main(argv):
         l["trazado"] = [[[round(la, 6), round(lo, 6)] for la, lo in ruta]] + resto
         l["ajuste"] = "osrm-paradas"
         l["km_calles"] = round(L / 1000, 1)
+    # consenso: si una línea se separa sola de las demás en un tramo corto y vuelve a juntarse (p. ej. la 05 por una
+    # pista recta junto al Hotel Gorriones mientras las demás van por la C. Crisálida), va por donde van ellas
+    print("Consenso entre líneas")
+    red = Red(teselas_necesarias(originales))
+    trazos = {n: [[tuple(p) for p in t] for t in x["trazado"]] for n, x in datos.items() if x.get("trazado")}
+    lineas = RedLineas(trazos, red)
+    limpiar_trazados.UNIFICAR_MAX_M = CONSENSO_MAX_M
+    for num, x in datos.items():
+        if (a.lineas and num not in a.lineas) or num not in resumen:
+            continue
+        # donde una línea tuvo que seguir el dibujo de Tiadhe, el camino de las demás vale también en tramos largos
+        limpiar_trazados.UNIFICAR_MAX_M = CONSENSO_DIBUJO_MAX_M if con_dibujo.get(num) else CONSENSO_MAX_M
+        # puntos cada 20 m en los segmentos largos: así un tramo recto que se separa de las demás se detecta entero
+        # aunque sus dos extremos coincidan con otras líneas
+        denso = [trazos[num][0][0]]
+        for x0, x1 in zip(trazos[num][0], trazos[num][0][1:]):
+            k = max(1, int(m(x0, x1) / 20))
+            denso += [(x0[0] + (x1[0] - x0[0]) * i / k, x0[1] + (x1[1] - x0[1]) * i / k) for i in range(1, k + 1)]
+        t = unificar(denso, lineas, num, todas, lambda txt, n=num: print(f"  {n}:{txt}"))
+        t = [q for i, q in enumerate(t) if i in (0, len(t) - 1) or abs(rumbo(t[i - 1], q) - rumbo(q, t[i + 1])) > 0.5]
+        x["trazado"][0] = [[round(la, 6), round(lo, 6)] for la, lo in t]
     (DATOS / ".cache_osrm" / "informe_rutas.json").write_text(json.dumps(resumen, ensure_ascii=False, indent=1))
     if not a.dry_run:
         f.write_text(json.dumps(datos, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

@@ -66,6 +66,7 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
   pronto que sale la otra, y cambiando de guagua en la primera parada en la que se pueda (sin rodeos).
   Con **Elegir camino** el mapa muestra solo ese camino: el trozo exacto de cada línea (de la parada donde te subes a
   la que te bajas), sus paradas y lo que hay que andar (desde donde estás, si diste permiso de ubicación).
+- **Ver una sola línea**: botón «Líneas» bajo el buscador; deja en el mapa solo esa línea y sus paradas (se recuerda).
 - **Favoritas** (con cuenta de Google), recientes, enlace para compartir una parada con vista previa.
 
 ## Vigilancia

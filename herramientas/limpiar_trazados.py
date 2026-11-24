@@ -38,6 +38,7 @@ RAMAL_MAX_M = 1200   # longitud máxima de un ramal de ida y vuelta
 RAMAL_MIN_M = 40
 PARADA_PUNTA_M = 60  # con una parada de la línea en el ramal, el ramal se queda (la guagua entra a por ella)
 FALTA_M = 80         # una vuelta del original se usa si al ajuste le falta un tramo seguido así de largo…
+RECTA_DIBUJO_M = 150 # …sin rectas largas (atajos dibujados a mano de punta a punta)…
 VUELTA_MIN_M = 120   # …que se aleje del cruce (si no, es una rotonda dibujada a mano)
 VUELTA_MAX_M = 600   # …y si es corta (un pueblo como Giniginamar); las largas se avisan
 LEJOS_M = 35         # …a más de esto (la imprecisión normal del dibujo a mano no cuenta)
@@ -372,6 +373,9 @@ def quitar_ramales(t, paradas, nucleos, orig, log, fijos):
             if falta >= FALTA_M and acumulado(bucle)[-1] > VUELTA_MAX_M:
                 log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: al ajuste le faltan {falta:.0f} m de la que dibujó "
                     f"Tiadhe, pero es larga ({acumulado(bucle)[-1]:.0f} m) y no se cambia por el dibujo a mano")
+            elif falta >= FALTA_M and max(m(x, y) for x, y in zip(bucle, bucle[1:])) > RECTA_DIBUJO_M:
+                log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: la que dibujó Tiadhe tiene rectas largas "
+                    f"(atajos dibujados a mano): no se cambia")
             elif falta >= FALTA_M and max(m(tramo[0], q) for q in bucle) < VUELTA_MIN_M:
                 log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: la que dibujó Tiadhe no se aleja del cruce "
                     f"(una rotonda dibujada a mano): no se cambia")
