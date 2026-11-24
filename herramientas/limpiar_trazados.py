@@ -10,12 +10,18 @@ Se ejecuta después de ajustar_rutas.py y usa su misma red de calles (datos/.cac
   1. Tramos fuera de la calle. Donde el mapa original de Tiadhe corta en línea recta por el campo (y el ajuste conservó
      ese dibujo porque no encontró calle), el tramo se cambia por el camino más corto por calles reales entre los dos
      puntos en los que el trazado vuelve a estar en la calle. Solo si ese camino no es mucho más largo que el dibujo:
-     si lo es, se deja y se avisa (puede ser una calle nueva que aún no está en OpenStreetMap).
+     si lo es, se deja y se avisa (puede ser una calle nueva que aún no está en OpenStreetMap). Si no hay camino por
+     calles, el tramo va por donde van las demás líneas (p. ej. un enlace de la FV-2 al que solo se llega desde la
+     otra calzada): así todas las líneas pasan por el mismo sitio.
   2. Ramales de ida y vuelta. Si el trazado se mete por una calle y vuelve por ella al mismo punto sin que haya una
      parada de la línea en la punta (p. ej. el ramal sin salida del enlace de La Lajita), se quita. Solo los que
      inventó el ajuste: si el mapa original de Tiadhe también entra y vuelve (un desvío de verdad), se queda.
      Si donde el ajuste va y vuelve por la misma calle el original da una vuelta (baja por una y sube por otra que no
      está en la red de calles, como en Giniginamar), se usa la vuelta del original.
+  5. Coherencia: si una línea se separa sola de las demás en un tramo corto (≤ 250 m) y vuelve a juntarse, va por
+     donde van ellas, si no es más largo y sus paradas siguen en la línea.
+  4. Lazos: si el trazado se cruza consigo mismo en menos de 400 m sin parada en medio (zigzags en un enlace que no
+     está en la red de calles, como junto al Hotel Gorriones), se corta por el cruce.
   3. Picos: un vértice en el que el trazado da media vuelta en seco se quita.
 """
 import argparse, heapq, json, math, sys
@@ -32,10 +38,13 @@ RAMAL_MAX_M = 1200   # longitud máxima de un ramal de ida y vuelta
 RAMAL_MIN_M = 40
 PARADA_PUNTA_M = 60  # con una parada de la línea en el ramal, el ramal se queda (la guagua entra a por ella)
 FALTA_M = 80         # una vuelta del original se usa si al ajuste le falta un tramo seguido así de largo…
+VUELTA_MIN_M = 120   # …que se aleje del cruce (si no, es una rotonda dibujada a mano)
 VUELTA_MAX_M = 600   # …y si es corta (un pueblo como Giniginamar); las largas se avisan
 LEJOS_M = 35         # …a más de esto (la imprecisión normal del dibujo a mano no cuenta)
 RECTA_LARGA_M = 250  # un segmento del original así de largo es un atajo dibujado a mano, no una calle
 ORIGINAL_M = 60      # ni si el trazado original de Tiadhe llega a la punta (solo se quitan los ramales que inventó el ajuste)
+UNIFICAR_MAX_M = 250 # tramo máximo en el que una línea, sola, se separa de las demás y vuelve a juntarse
+LAZO_MAX_M = 400     # un lazo (el trazado se cruza consigo mismo) más corto que esto, sin parada, se quita
 PICO_GRADOS = 150    # media vuelta en seco en un vértice: es un pico del ajuste, no una calle
 NUCLEO_M = 300       # ni si cerca de la punta hay un núcleo de la línea (lineas_base.json, coordenadas aproximadas:
                      # ahí están los desvíos de las variantes, p. ej. Las Playitas o Triquivijate)
@@ -91,13 +100,96 @@ def camino_calles(red, a, b, limite):
     return [qa] + [red.pos[n] for n in reversed(nodos)] + [qb]
 
 
-def arreglar_fuera(red, t, orig, log):
-    """Cambia los tramos fuera de la calle por el camino por calles. Devuelve la polilínea nueva."""
+def segmentos_fuera(red, t):
+    """Para cada segmento de t: ¿pasa en algún punto a más de FUERA_M de cualquier calle?"""
     fuera = []
     for a, b in zip(t, t[1:]):
         n = max(1, int(m(a, b) / MUESTRA_M))
         fuera.append(any(dist_calle(red, (a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n))[0] > FUERA_M
                          for k in range(n + 1)))
+    return fuera
+
+
+class RedLineas:
+    """Grafo con los trazados de todas las líneas (solo los segmentos que van por la calle). Donde una línea no
+    encuentra calle (un enlace que falta en OpenStreetMap), puede ir por donde van las demás: así todas pasan por el
+    mismo sitio y el mapa es coherente."""
+
+    def __init__(self, trazados_por_linea, red):
+        self.pos, self.id, self.ady, self.lineas, rejilla = [], {}, {}, {}, {}
+        def nodo(p):
+            k = (round(p[0], 5), round(p[1], 5))
+            if k not in self.id:
+                self.id[k] = len(self.pos)
+                self.pos.append(p)
+                rejilla.setdefault((int(p[0] / 0.0002), int(p[1] / 0.0002)), []).append(self.id[k])
+            return self.id[k]
+        for num, partes in trazados_por_linea.items():
+            for t in partes:
+                fuera = segmentos_fuera(red, t)
+                for (a, b), f in zip(zip(t, t[1:]), fuera):
+                    if f:
+                        continue
+                    u, v, L = nodo(a), nodo(b), m(a, b)
+                    self.lineas.setdefault(u, set()).add(num)
+                    self.lineas.setdefault(v, set()).add(num)
+                    self.ady.setdefault(u, []).append((v, L, num))
+                    self.ady.setdefault(v, []).append((u, L, num))
+        # unir puntos de líneas distintas que están a pocos metros (las bandas van por la misma calle)
+        for (ci, cj), ns in rejilla.items():
+            cerca = [x for di in (-1, 0, 1) for dj in (-1, 0, 1) for x in rejilla.get((ci + di, cj + dj), ())]
+            for u in ns:
+                for v in cerca:
+                    if u < v and m(self.pos[u], self.pos[v]) < 6:
+                        L = m(self.pos[u], self.pos[v])
+                        self.ady.setdefault(u, []).append((v, L, None))
+                        self.ady.setdefault(v, []).append((u, L, None))
+        self.rejilla = rejilla
+
+    def cerca(self, p, radio=25):
+        ci, cj = int(p[0] / 0.0002), int(p[1] / 0.0002)
+        r = 2
+        return [(n, m(p, self.pos[n])) for di in range(-r, r + 1) for dj in range(-r, r + 1)
+                for n in self.rejilla.get((ci + di, cj + dj), ()) if m(p, self.pos[n]) < radio]
+
+    def compartido(self, p, num, radio=12):
+        """¿Pasa otra línea a menos de 'radio' m de p?"""
+        return any(self.lineas.get(n, set()) - {num} for n, _ in self.cerca(p, radio))
+
+    def camino(self, a, b, excluir, limite):
+        """Camino más corto de a a b por los trazados de las otras líneas. [(lat, lon)] o None."""
+        dist, prev, pq = {}, {}, []
+        for n, d0 in self.cerca(a):
+            if d0 < dist.get(n, 1e18):
+                dist[n] = d0
+                heapq.heappush(pq, (d0, n))
+        fin = dict(self.cerca(b))
+        mejor, nodo_fin = 1e18, None
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist.get(u, 1e18) or d > limite or d >= mejor:
+                continue
+            if u in fin and d + fin[u] < mejor:
+                mejor, nodo_fin = d + fin[u], u
+            for v, L, num in self.ady.get(u, ()):
+                if num == excluir:
+                    continue
+                if d + L < dist.get(v, 1e18):
+                    dist[v], prev[v] = d + L, u
+                    heapq.heappush(pq, (d + L, v))
+        if nodo_fin is None or mejor > limite:
+            return None
+        nodos, x = [], nodo_fin
+        while x in prev:
+            nodos.append(x)
+            x = prev[x]
+        nodos.append(x)
+        return [a] + [self.pos[n] for n in reversed(nodos)] + [b]
+
+
+def arreglar_fuera(red, t, orig, log, lineas=None, num=None):
+    """Cambia los tramos fuera de la calle por el camino por calles (o, si no lo hay, por donde van las demás líneas)."""
+    fuera = segmentos_fuera(red, t)
     # tramos [a, b] (índices de puntos) con algún segmento fuera, ampliados hasta puntos que estén en la calle
     tramos, i = [], 0
     while i < len(fuera):
@@ -125,15 +217,54 @@ def arreglar_fuera(red, t, orig, log):
         if cam and not fiel_al_original(cam, orig):
             log(f"    AVISO el camino por calles en {t[a][0]:.5f},{t[a][1]:.5f} se aleja del original de Tiadhe: se deja el dibujo")
             cam = None
+        otras = None
+        if not cam and lineas is not None:
+            otras = lineas.camino(t[a], t[b], num, largo * 2 + 100)
         if cam:
             res += [t[a]] + cam[1:-1]
             log(f"    tramo fuera de la calle en {t[a][0]:.5f},{t[a][1]:.5f}: {largo:.0f} m dibujados → "
                 f"{acumulado(cam)[-1]:.0f} m por calles")
+        elif otras:
+            res += [t[a]] + otras[1:-1]
+            log(f"    tramo fuera de la calle en {t[a][0]:.5f},{t[a][1]:.5f}: {largo:.0f} m dibujados → "
+                f"{acumulado(otras)[-1]:.0f} m por donde van las demás líneas")
         else:
             res += t[a:b]
             log(f"    AVISO sin arreglo: tramo fuera de la calle en {t[a][0]:.5f},{t[a][1]:.5f} ({largo:.0f} m)")
         ult = b
     return res + t[ult:]
+
+
+def unificar(t, lineas, num, paradas, log):
+    """Si la línea se separa de las demás en un tramo corto y vuelve a juntarse (un enlace, una rotonda), va por donde
+    van las otras: así todas pasan igual. Solo si ese camino no es más largo y sus paradas siguen en la línea."""
+    comp = [lineas.compartido(p, num) for p in t]
+    res, i = [t[0]], 1
+    while i < len(t):
+        if comp[i] or not comp[i - 1]:
+            res.append(t[i]); i += 1
+            continue
+        j = i
+        while j < len(t) and not comp[j]:
+            j += 1
+        if j >= len(t):
+            res += t[i:]; break
+        a, b = i - 1, j            # t[a] y t[b] compartidos; entre medias, la línea va sola
+        largo = acumulado(t[a:b + 1])[-1]
+        otro = lineas.camino(t[a], t[b], num, largo * 1.2 + 30) if largo <= UNIFICAR_MAX_M else None
+        if otro:
+            def dist(q, linea):
+                return min(proyectar_seg(q, x, y)[0] for x, y in zip(linea, linea[1:]))
+            suyas = {s_ for p in t[a:b + 1] for s_ in paradas_cerca(paradas, p) if dist(s_, t[a:b + 1]) < 30}
+            if all(dist(s_, otro) <= max(25, dist(s_, t[a:b + 1]) + 10) for s_ in suyas):
+                log(f"    se separa de las demás líneas en {t[a][0]:.5f},{t[a][1]:.5f} ({largo:.0f} m) → va con ellas "
+                    f"({acumulado(otro)[-1]:.0f} m)")
+                res += otro[1:-1] + [t[b]]
+                i = b + 1
+                continue
+        res += t[i:b + 1]
+        i = b + 1
+    return res
 
 
 def segmento_original(orig, p):
@@ -241,6 +372,15 @@ def quitar_ramales(t, paradas, nucleos, orig, log, fijos):
             if falta >= FALTA_M and acumulado(bucle)[-1] > VUELTA_MAX_M:
                 log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: al ajuste le faltan {falta:.0f} m de la que dibujó "
                     f"Tiadhe, pero es larga ({acumulado(bucle)[-1]:.0f} m) y no se cambia por el dibujo a mano")
+            elif falta >= FALTA_M and max(m(tramo[0], q) for q in bucle) < VUELTA_MIN_M:
+                log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: la que dibujó Tiadhe no se aleja del cruce "
+                    f"(una rotonda dibujada a mano): no se cambia")
+            elif falta >= FALTA_M and not any(
+                    min(proyectar_seg(s_, x, y)[0] for x, y in zip(bucle, bucle[1:])) < 40
+                    for s_ in {s_ for q in bucle for s_ in paradas_cerca(paradas, q)}
+                    if m(s_, tramo[0]) > 30 and m(s_, tramo[-1]) > 30):
+                log(f"    AVISO vuelta en {tramo[0][0]:.5f},{tramo[0][1]:.5f}: al ajuste le faltan {falta:.0f} m de la que dibujó "
+                    f"Tiadhe, pero no pasa por ninguna parada (dibujo a mano de un enlace): no se cambia")
             elif falta >= FALTA_M:
                 # el original da una vuelta (p. ej. Giniginamar: baja por una calle y sube por otra que no está en la
                 # red de calles): se usa la vuelta del original, si las paradas siguen quedando en la línea
@@ -294,6 +434,47 @@ def quitar_picos(t, paradas, log, fijos=frozenset()):
     return t
 
 
+def _cruce(a, b, c, d):
+    """Punto donde se cortan los segmentos a-b y c-d (o None)."""
+    r = (b[0] - a[0], b[1] - a[1]); q = (d[0] - c[0], d[1] - c[1])
+    den = r[0] * q[1] - r[1] * q[0]
+    if abs(den) < 1e-14:
+        return None
+    t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / den
+    u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den
+    if 0 < t < 1 and 0 < u < 1:
+        return (a[0] + t * r[0], a[1] + t * r[1])
+    return None
+
+
+def quitar_lazos(t, paradas, nucleos, log, fijos=frozenset()):
+    """Lazos: el trazado se cruza consigo mismo y vuelve a pasar por el mismo sitio en poco trecho (zigzags de un enlace
+    que no está en la red de calles). Se corta por el cruce, salvo si en el lazo hay una parada (una vuelta de verdad)."""
+    i = 0
+    while i < len(t) - 3:
+        L, hecho = 0.0, False
+        for j in range(i + 2, len(t) - 1):
+            L += m(t[j - 1], t[j])
+            if L > LAZO_MAX_M:
+                break
+            x = _cruce(t[i], t[i + 1], t[j], t[j + 1])
+            if not x:
+                continue
+            lazo = t[i + 1:j + 1]
+            tramo = [t[i]] + lazo + [t[j + 1]]
+            cerca = {s_ for p in tramo for s_ in paradas_cerca(paradas, p)}
+            if any(p in fijos for p in lazo) or any(m(p, s_) < NUCLEO_M for p in tramo for s_ in nucleos) or any(
+                    min(proyectar_seg(s_, a, b)[0] for a, b in zip(tramo, tramo[1:])) < PARADA_PUNTA_M for s_ in cerca):
+                break
+            log(f"    lazo en {x[0]:.5f},{x[1]:.5f}: {acumulado([x] + lazo + [x])[-1]:.0f} m sin parada → quitado")
+            t = t[:i + 1] + [x] + t[j + 1:]
+            hecho = True
+            break
+        if not hecho:
+            i += 1
+    return t
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("lineas", nargs="*")
@@ -314,6 +495,8 @@ def main(argv):
     for n, o in originales.items():
         tr = o.get("trazado") or []
         orig[n] = [tuple(p) for parte in (tr if tr and isinstance(tr[0][0], list) else [tr]) for p in parte]
+    lineas = RedLineas({n: [[tuple(p) for p in t] for t in (l["trazado"] if isinstance(l["trazado"][0][0], list) else [l["trazado"]])]
+                        for n, l in datos.items() if l.get("trazado")}, red)
     for num, l in datos.items():
         if (a.lineas and num not in a.lineas) or not l.get("trazado"):
             continue
@@ -322,12 +505,14 @@ def main(argv):
         nuevas = []
         for t in partes:
             t = [tuple(p) for p in t]
-            t = arreglar_fuera(red, t, orig.get(num, []), print)
+            t = arreglar_fuera(red, t, orig.get(num, []), print, lineas, num)
+            t = unificar(t, lineas, num, todas, print)
             fijos = set()   # puntos puestos desde el original (vueltas): no se vuelven a tocar
             while True:   # hasta que no cambie nada (quitar un pico puede dejar a la vista un ramal)
                 n = len(t)
                 t = quitar_ramales(t, todas, nucleos.get(num, []), orig.get(num, []), print, fijos)
                 t = quitar_picos(t, todas, print, fijos)
+                t = quitar_lazos(t, todas, nucleos.get(num, []), print, fijos)
                 if len(t) == n:
                     break
             nuevas.append([[round(x, 6), round(y, 6)] for x, y in t])
