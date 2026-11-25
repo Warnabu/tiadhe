@@ -82,5 +82,11 @@ rq.request = orig
 check(rr.status_code == 200 and llamadas and llamadas[0][1] == "https://guaguas-ftv1.firebaseapp.com/__/firebase/init.json", f"proxy /__/firebase/init.json -> {llamadas[:1]}")
 check("Set-Cookie" not in rr.headers and rr.headers.get("Cache-Control") == "no-store", "el proxy no reenvía cookies y no cachea")
 idx = c.get("/").get_data(as_text=True); sw = c.get("/sw.js").get_data(as_text=True)
-check("firebaseListo" in idx and "VERSION" in sw and "'/__/'" in sw, "index.html y sw.js servidos con las versiones nuevas")
+import re as _re
+scripts = _re.findall(r'<script[^>]+src="(/[^"]+)"', idx) + _re.findall(r'<link rel="stylesheet" href="(/[^"]+)"', idx)
+servidos = {u: c.get(u) for u in scripts}
+check(all(r.status_code == 200 and r.get_data() for r in servidos.values()) and "/js/comun.js" in servidos and "/css/estilos.css" in servidos,
+      f"index.html y sus {len(servidos)} archivos de estilos y código se sirven")
+check("firebaseListo" in servidos["/js/comun.js"].get_data(as_text=True) and "VERSION" in sw and "'/__/'" in sw
+      and all(u in sw or u.split("/")[-1].split(".")[0] in sw for u in scripts), "sw.js guarda en caché los archivos de la web")
 print(f"\n{ok} correctas, {fallos} fallos"); sys.exit(1 if fallos else 0)
