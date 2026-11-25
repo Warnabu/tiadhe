@@ -22,7 +22,7 @@ app/             lo que corre en producción (detalle de cada archivo en app/__i
   db.py            PostgreSQL (SQLite en local)
   bandas.py        líneas en paralelo donde comparten calle
   seguridad.py     cabeceras HTTP, IP real detrás del proxy, límite de peticiones por IP
-web/             la web (PWA): index.html, css/, js/, sw.js
+web/             la web (PWA): index.html (estructura), css/estilos.css, js/ (un archivo por función), sw.js
 datos/           horarios, paradas y trazados — qué es cada archivo en datos/README.md
 herramientas/    scripts para preparar paradas y rutas — orden y uso en herramientas/README.md
 tests/           pruebas del servidor
@@ -65,7 +65,7 @@ python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectur
 
 - Próximas guaguas en cada parada. Las horas estimadas muestran siempre **lo más pronto** que puede pasar
   (rango "en 17-30 min" o "desde las 11:15"): es preferible esperar un poco a perderla.
-- **Tiempo real (próximamente; desactivado con `TIEMPO_REAL_DISPONIBLE` en web/cliente.js)**: "Me he subido a esta guagua"; cuando coinciden varias personas, la hora se corrige
+- **Tiempo real (próximamente; desactivado con `TIEMPO_REAL_DISPONIBLE` en web/js/cliente.js)**: "Me he subido a esta guagua"; cuando coinciden varias personas, la hora se corrige
   para las paradas siguientes. El panel muestra la actividad del día para animar a avisar.
 - **Avísame 5 min antes** (notificación push, aunque la web esté cerrada).
 - **Ver una línea** (tocando su número): recorrido, próximas salidas y paradas.

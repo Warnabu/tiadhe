@@ -1,9 +1,10 @@
 // Service Worker de Guaguas FTV. Súbele la versión en cada despliegue que cambie assets.
-const VERSION = 'v17-2026-11-24-tiempo-real-proximamente';
+const VERSION = 'v18-2026-11-25-web-en-archivos';
 const CACHE = 'guaguas-ftv-' + VERSION;
 const ICONOS = ['/icons/icon-192.png', '/icons/icon-512.png', '/manifest.webmanifest'];
 const LEAFLET = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
-const SHELL = ['/', '/cliente.js'];   // network-first: siempre intentan la red para no quedarse con código viejo
+const JS = ['comun', 'firebase', 'cliente', 'mapa', 'parada', 'linea', 'ruta', 'buscar', 'cuenta', 'arranque'].map(f => `/js/${f}.js`);
+const SHELL = ['/', '/css/estilos.css', ...JS];   // network-first: siempre intentan la red para no quedarse con código viejo
 
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
@@ -57,7 +58,7 @@ self.addEventListener('fetch', e => {
     e.respondWith(redPrimero(req));
     return;
   }
-  if (req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.js') || url.pathname.endsWith('.html')) {
+  if (req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname.endsWith('.html')) {
     e.respondWith(redPrimero(req));
     return;
   }
