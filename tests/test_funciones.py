@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from app import servidor as s, guaguas as g
+from app import servidor as s, guaguas as g, avisos
 from app.comunidad import mensaje
 
 ok = fallos = 0
@@ -73,17 +73,17 @@ st, j = pedir("POST", "/api/recordatorio", {"parada": pid_est, "viaje": sal["via
 check(st == 200 and j["activo"], f"aviso creado: {j.get('mensaje')}")
 check(pedir("GET", "/api/recordatorios")[1]["recordatorios"] == [{"parada": pid_est, "viaje": sal["viaje"]}], "aparece en los pendientes")
 enviados = []
-s.send_fcm_push = lambda tok, t, b, data=None: (enviados.append((t, b, data)) or (True, None))
-s.revisar_recordatorios()
+avisos.send_fcm_push = lambda tok, t, b, data=None: (enviados.append((t, b, data)) or (True, None))
+avisos.revisar_recordatorios()
 check(not enviados, "no se envía mientras la guagua está lejos")
-real = s.datetime
+real = avisos.datetime
 class Reloj(real):
     @classmethod
     def now(cls, tz=None):
         return real.now(tz) + (g.llegada_minima(sal) - ahora_l) - timedelta(minutes=4)
-s.datetime = Reloj
-s.revisar_recordatorios()
-s.datetime = real
+avisos.datetime = Reloj
+avisos.revisar_recordatorios()
+avisos.datetime = real
 check(len(enviados) == 1 and "en unos 4 min" in enviados[0][1] and enviados[0][2]["url"].endswith(pid_est),
       f"a 4 min se envía la notificación: {enviados[0][1] if enviados else '-'}")
 check(pedir("GET", "/api/recordatorios")[1]["recordatorios"] == [], "y ya no está pendiente")

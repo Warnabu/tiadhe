@@ -6,17 +6,25 @@ corregidos en vivo por la gente que se sube ("me he subido a esta guagua").
 ## Estructura
 
 ```
-app/             lo que corre en producción
-  servidor.py      web y API (Flask)
+app/             lo que corre en producción (detalle de cada archivo en app/__init__.py)
+  servidor.py      monta la app: seguridad, rutas, errores, hilo de avisos
+  api/             rutas HTTP por tema: paradas, viajes (cómo llegar), comunidad, avisos, cuenta, web
+  config.py        variables de entorno y constantes
+  datos.py         horarios, líneas y paradas cargados al arrancar
   guaguas.py       horarios y tiempos de paso por parada
-  comunidad.py     avisos "me he subido": firmas, consenso, reputación, aprendizaje
+  paradas.py       qué paradas son el mismo punto del mapa (y su sentido)
+  planificador.py  cómo llegar con transbordos
+  tablero.py       próximas guaguas de una parada
+  contexto.py      hora, IP, dispositivo y comunidad de cada petición
+  comunidad.py     avisos "me he subido": firmas, consenso, reputación, recordatorios, favoritas
+  cuenta.py        Google/Firebase (sesión) y notificaciones push
+  avisos.py        «avísame 5 min antes»
   db.py            PostgreSQL (SQLite en local)
   bandas.py        líneas en paralelo donde comparten calle
-  planificador.py  cómo llegar con transbordos
   seguridad.py     cabeceras HTTP, IP real detrás del proxy, límite de peticiones por IP
-web/             la web (PWA): index.html, cliente.js, sw.js
+web/             la web (PWA): index.html, css/, js/, sw.js
 datos/           horarios, paradas y trazados — qué es cada archivo en datos/README.md
-herramientas/    scripts para preparar las rutas (importar, ajustar a las calles, revisar)
+herramientas/    scripts para preparar paradas y rutas — orden y uso en herramientas/README.md
 tests/           pruebas del servidor
 docs/            guías (base de datos)
 servidor.py      punto de entrada (Render arranca `gunicorn servidor:app`)
