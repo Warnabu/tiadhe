@@ -8,7 +8,7 @@
 Entradas:
   - datos/paradas_mapa.json: los iconos de parada del mapa de OpenStreetMap (herramientas/paradas_mapa.py).
   - datos/.cache_osrm/kml/<línea>.kml: el mapa de Google de Tiadhe de cada línea, con sus capas «Paradas Ida» y
-    «Paradas Vuelta» (herramientas/importar_mapas.py las descarga; aquí solo se leen).
+    «Paradas Vuelta». Si falta alguno se descarga (despacio: tiadhe.com bloquea si se le piden varios seguidos).
 
 Reglas (aquí se circula por la derecha: la parada de ida queda a la derecha del recorrido de ida):
   - Parada que Tiadhe pone en los dos sentidos (mismo punto en las dos capas): si el mapa tiene dos iconos, uno a cada
@@ -45,7 +45,32 @@ def lado(t, p):
     return d if (b[1] - a[1]) * c * (p[0] - a[0]) - (b[0] - a[0]) * (p[1] - a[1]) * c > 0 else -d
 
 
-def sentidos_tiadhe(num, origen=None, destino=None):
+def descargar_kml(num, log=print):
+    """Baja el mapa de Google de Tiadhe de la línea (si no está ya). tiadhe.com bloquea si se le piden varias páginas
+    seguidas: se espera entre intentos."""
+    import time
+    import importar_mapas as I
+    import requests
+    f = DATOS / ".cache_osrm" / "kml" / f"{num}.kml"
+    if f.exists():
+        return True
+    f.parent.mkdir(parents=True, exist_ok=True)
+    for intento in range(6):
+        mids = I.buscar_mids(num)
+        if mids:
+            time.sleep(5)
+            r = requests.get(I.KML.format(mids[0]), headers=I.UA, timeout=60)
+            if r.ok:
+                f.write_bytes(r.content)
+                log(f"  mapa de Tiadhe de la línea {num}: descargado")
+                time.sleep(15)
+                return True
+        log(f"  mapa de Tiadhe de la línea {num}: tiadhe.com no responde, se reintenta en 90 s")
+        time.sleep(90)
+    return False
+
+
+def sentidos_tiadhe(num, origen=None, destino=None, avisar=True):
     """{nombre: [(lat, lon, {'ida', 'vuelta'})]} según las capas del mapa de Tiadhe (None si no está descargado).
     Si la capa «Paradas Ida» de Tiadhe empieza en nuestro destino (línea 11: su ida es nuestra vuelta), se invierte."""
     f = DATOS / ".cache_osrm" / "kml" / f"{num}.kml"
@@ -70,7 +95,8 @@ def sentidos_tiadhe(num, origen=None, destino=None):
                 primera.setdefault(s, (la, lo))
     invertir = bool(origen and destino and "ida" in primera and m(primera["ida"], destino) < m(primera["ida"], origen))
     if invertir:
-        print(f"  línea {num}: la «ida» de Tiadhe empieza en nuestro destino → se invierten sus sentidos")
+        if avisar:
+            print(f"  línea {num}: la «ida» de Tiadhe empieza en nuestro destino → se invierten sus sentidos")
         puntos = {k: {"vuelta" if x == "ida" else "ida" for x in v} for k, v in puntos.items()}
     res = {}
     for (n, la, lo), ss in puntos.items():
@@ -85,6 +111,8 @@ def main(argv):
     f = DATOS / "paradas_reales.json"
     datos = json.loads(f.read_text(encoding="utf-8"))
     mapa = [(p["lat"], p["lon"]) for p in json.loads((DATOS / "paradas_mapa.json").read_text())]
+    for num in datos:   # mapas de Tiadhe (capas Ida/Vuelta) que falten
+        descargar_kml(num)
     total = dict(paradas=0, movidas=0, separadas=0, con_sentido=0, sin_icono=0, sin_tiadhe=0)
     for num, l in datos.items():
         # deshacer una pasada anterior

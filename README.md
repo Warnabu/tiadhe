@@ -49,16 +49,11 @@ ALLOW_SQLITE_FALLBACK=1 python tests/test_funciones.py
 ALLOW_SQLITE_FALLBACK=1 python tests/test_produccion.py     # mejor con DATABASE_URL real
 ```
 
-**Actualizar las rutas** (si cambian los mapas de Tiadhe):
+**Actualizar paradas y rutas** (si cambian los mapas de Tiadhe; detalle en herramientas/README.md):
 
 ```bash
-python herramientas/importar_mapas.py      # mapas de Google → datos/trazados_originales.json
-python herramientas/ajustar_rutas.py       # los pega a las calles reales → datos/paradas_reales.json
-python herramientas/limpiar_trazados.py    # quita rodeos fuera de la calle, ramales y picos que deja el ajuste
-python herramientas/paradas_mapa.py        # paradas tal como las pinta el mapa (icono del bus) → datos/paradas_mapa.json
-python herramientas/colocar_paradas.py     # cada parada a su icono del mapa, con su sentido (capas Ida/Vuelta de Tiadhe)
-python herramientas/rutas_osrm.py          # cada línea, un trazo continuo por sus paradas (OSRM) — lo que se publica
-python herramientas/revisar_trazados.py    # informe de cosas raras (solo lectura)
+python herramientas/rehacer_rutas.py       # todos los pasos y comprobación final
+python herramientas/verificar.py           # solo comprobar (qué guaguas pasan por cada parada, trazos…)
 ```
 
 ## Qué hace la app
