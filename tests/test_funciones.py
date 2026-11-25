@@ -107,6 +107,13 @@ sal = g.proximas(dict(nombre="x", ids=v_ida["ids"]), datetime(2026, 11, 25, 8, 0
 check(sal and all(x["viaje"].split("|")[2] == "ida" for x in sal if x["linea"] == "01"),
       f"en «{v_ida['nombre']}» solo salen las guaguas de ida de la 01 ({len(sal)} salidas)")
 
+# --- mismo poste, una sola parada aunque sea de sentidos distintos (fondo de saco del Hotel Gorriones)
+gorr = [v for v in s.PARADAS.values() if g.km(v, dict(lat=28.13756, lon=-14.24584)) < 0.02]
+check(len(gorr) == 1 and {"01", "04", "05", "25"} <= set(gorr[0]["lineas"]),
+      f"Hotel Gorriones: un solo punto con {sorted(gorr[0]['lineas']) if gorr else '-'}")
+P_ = list(s.PARADAS.values())
+check(not any(g.km(a_, b_) < 0.006 for i, a_ in enumerate(P_) for b_ in P_[i + 1:]), "no hay dos paradas una encima de otra")
+
 # --- ver línea y cómo llegar
 j = c.get("/api/linea/01").get_json()
 check(len(j["paradas"]) > 50 and j["paradas"][0]["nombre"].lower().startswith("estacion puerto"), f"línea 01: {len(j['paradas'])} paradas desde la estación")

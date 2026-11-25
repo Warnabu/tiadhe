@@ -101,6 +101,9 @@ def send_fcm_push(token: str, title: str, body: str, data: dict = None):
         return False, "fallo_fcm"
 
 
+MISMO_SITIO_KM = 0.012   # mismo poste: a menos de esto no pueden ser dos aceras
+
+
 def agrupar(radio_km=0.015, BASE=None, HORARIOS=None):
     """Une en un punto del mapa las paradas (de cualquier línea) que están en el mismo sitio (≤ 15 m; ≤ 60 m si no se
     sabe su sentido), y las del mismo
@@ -117,7 +120,8 @@ def agrupar(radio_km=0.015, BASE=None, HORARIOS=None):
             d = g.km({"lat": lat, "lon": lon}, gr)
             contrarios = solo and gr["solos"] and solo not in gr["solos"]
             sin_sentido = not solo and not gr["solos"]   # sin sentido conocido: como antes, una sola parada a ≤ 60 m
-            if (d <= radio_km and not contrarios) or (sin_sentido and d <= 0.06) or (d <= 0.2 and not contrarios and g.norm(n) in {g.norm(x) for x in gr["nombres"]}
+            # a ≤ 12 m es el mismo poste, sea cual sea el sentido (fondo de saco: Hotel Gorriones, ida y vuelta)
+            if d <= MISMO_SITIO_KM or (d <= radio_km and not contrarios) or (sin_sentido and d <= 0.06) or (d <= 0.2 and not contrarios and g.norm(n) in {g.norm(x) for x in gr["nombres"]}
                                                      and (not solo) == (not gr["solos"])):
                 gr["c"] += 1
                 gr["lat"] += (lat - gr["lat"]) / gr["c"]
@@ -126,15 +130,19 @@ def agrupar(radio_km=0.015, BASE=None, HORARIOS=None):
                 gr["hacia"].append(HORARIOS.get(num, {}).get("destino" if solo == "ida" else "origen") if solo else None)
                 if solo:
                     gr["solos"].add(solo)
+                else:
+                    gr["ambos"] = True
                 break
         else:
-            grupos.append(dict(lat=lat, lon=lon, c=1, ids={pid}, nombres=[n], lineas={num}, solos={solo} if solo else set(),
+            grupos.append(dict(lat=lat, lon=lon, c=1, ids={pid}, nombres=[n], lineas={num}, solos={solo} if solo else set(), ambos=not solo,
                                hacia=[HORARIOS.get(num, {}).get("destino" if solo == "ida" else "origen") if solo else None]))
     res = {}
     for gr in grupos:
         gr["nombre"] = Counter(gr["nombres"]).most_common(1)[0][0]
         hacia = [h for h in gr.pop("hacia") if h]
-        if hacia and len(gr["solos"]) == 1:   # parada de un solo sentido: hacia dónde van sus guaguas
+        if gr.pop("ambos") or len(gr["solos"]) > 1:
+            gr["solos"] = set()   # alguna guagua para aquí en los dos sentidos (o hay de los dos): sin flecha
+        if hacia and len(gr["solos"]) == 1:   # todas sus guaguas en un sentido: hacia dónde van
             dest = Counter(hacia).most_common(1)[0][0]
             if not set(g.norm(dest).split()) & set(g.norm(gr["nombre"]).split()):   # «Ayto. Tuineje → Tuineje», no
                 gr["nombre"] += " → " + dest
